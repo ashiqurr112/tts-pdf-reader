@@ -490,7 +490,9 @@ class TtsPdfViewerFragment : PdfViewerFragment() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         documentUriToLoad?.let { uri ->
-            documentUri = uri
+            if (isAdded && !isDetached) {
+                documentUri = uri
+            }
         }
     }
 
@@ -517,6 +519,11 @@ class TtsPdfViewerFragment : PdfViewerFragment() {
                 onPageChangedListener?.invoke(firstVisiblePage)
             }
         })
+    }
+
+    override fun onDestroyView() {
+        pdfViewReference = null
+        super.onDestroyView()
     }
 
     @OptIn(androidx.pdf.ExperimentalPdfApi::class)
