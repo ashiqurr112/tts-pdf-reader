@@ -16,6 +16,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.pdf.viewer.fragment.PdfViewerFragment
+import androidx.pdf.view.PdfView
 import android.content.Context
 import android.content.ContextWrapper
 import com.example.ttspdfreader.R
@@ -155,41 +156,70 @@ fun ReaderScreen(
                         }
 
                         Box(modifier = Modifier.fillMaxSize()) {
-                            AndroidView(
-                                modifier = Modifier.fillMaxSize(),
-                                factory = { ctx ->
-                                    val container = FragmentContainerView(ctx).apply {
-                                        id = R.id.pdf_container
-                                    }
-                                    val activity = ctx.findActivity()
-                                    if (activity != null) {
-                                        val fragmentManager = activity.supportFragmentManager
-                                        // Always clean up existing fragment first to prevent blank screens on reload
-                                        val existingFragment = fragmentManager.findFragmentById(R.id.pdf_container)
-                                        if (existingFragment != null) {
-                                            fragmentManager.beginTransaction().remove(existingFragment).commitNow()
+                            key(uri) {
+                                AndroidView(
+                                    modifier = Modifier.fillMaxSize(),
+                                    factory = { ctx ->
+                                        val container = FragmentContainerView(ctx).apply {
+                                            id = R.id.pdf_container
                                         }
-                                        val fragment = PdfViewerFragment().apply {
-                                            arguments = Bundle().apply {
-                                                putParcelable("documentUri", uri)
+                                        val activity = ctx.findActivity()
+                                        if (activity != null) {
+                                            val fragmentManager = activity.supportFragmentManager
+                                            // Always clean up existing fragment first to prevent blank screens on reload
+                                            val existingFragment = fragmentManager.findFragmentById(R.id.pdf_container)
+                                            if (existingFragment != null) {
+                                                fragmentManager.beginTransaction().remove(existingFragment).commitNow()
+                                            }
+                                            
+                                            val fragment = object : PdfViewerFragment() {
+                                                @OptIn(androidx.pdf.ExperimentalPdfApi::class)
+                                                override fun onPdfViewCreated(pdfView: PdfView) {
+                                                    super.onPdfViewCreated(pdfView)
+                                                    
+                                                    // 1. Scroll to initial page when content loads
+                                                    pdfView.addOnFirstContentLoadListener {
+                                                        val page = currentState.initialPage
+                                                        if (page > 0) {
+                                                            pdfView.scrollToPage(page)
+                                                        }
+                                                    }
+                                                    
+                                                    // 2. Save page progress when viewport changes
+                                                    pdfView.addOnViewportChangedListener(object : PdfView.OnViewportChangedListener {
+                                                        override fun onViewportChanged(
+                                                            firstVisiblePage: Int,
+                                                            visiblePagesCount: Int,
+                                                            pageLocations: android.util.SparseArray<android.graphics.RectF>,
+                                                            zoomLevel: Float
+                                                        ) {
+                                                            viewModel.onPageChanged(firstVisiblePage)
+                                                        }
+                                                    })
+                                                }
+                                            }.apply {
+                                                arguments = Bundle().apply {
+                                                    putParcelable("documentUri", uri)
+                                                }
+                                            }
+                                            
+                                            fragmentManager.beginTransaction()
+                                                .replace(R.id.pdf_container, fragment)
+                                                .commit()
+                                        }
+                                        container
+                                    },
+                                    update = { container ->
+                                        val activity = container.context.findActivity()
+                                        if (activity != null) {
+                                            val fragment = activity.supportFragmentManager.findFragmentById(R.id.pdf_container) as? PdfViewerFragment
+                                            if (fragment != null && fragment.documentUri != uri) {
+                                                fragment.documentUri = uri
                                             }
                                         }
-                                        fragmentManager.beginTransaction()
-                                            .replace(R.id.pdf_container, fragment)
-                                            .commit()
                                     }
-                                    container
-                                },
-                                update = { container ->
-                                    val activity = container.context.findActivity()
-                                    if (activity != null) {
-                                        val fragment = activity.supportFragmentManager.findFragmentById(R.id.pdf_container) as? PdfViewerFragment
-                                        if (fragment != null && fragment.documentUri != uri) {
-                                            fragment.documentUri = uri
-                                        }
-                                    }
-                                }
-                            )
+                                )
+                            }
 
                             // Floating circular back button at top start (overlaying the full-screen PDF view)
                             IconButton(
