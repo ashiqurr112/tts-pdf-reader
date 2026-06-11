@@ -16,6 +16,10 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.pdf.viewer.fragment.PdfViewerFragment
+import android.content.Context
+import android.content.ContextWrapper
+import com.example.ttspdfreader.R
+import android.os.Bundle
 
 import androidx.fragment.app.FragmentActivity
 import androidx.fragment.app.FragmentContainerView
@@ -88,25 +92,33 @@ fun ReaderScreen(
                         modifier = Modifier.fillMaxSize(),
                         factory = { ctx ->
                             val container = FragmentContainerView(ctx).apply {
-                                id = android.view.View.generateViewId()
+                                id = R.id.pdf_container
                             }
-                            val activity = ctx as? FragmentActivity
+                            val activity = ctx.findActivity()
                             if (activity != null) {
                                 val fragmentManager = activity.supportFragmentManager
-                                val fragment = PdfViewerFragment()
-                                // The fragment handles loading automatically when documentUri is set
-                                fragment.documentUri = currentState.uri
-                                fragmentManager.beginTransaction()
-                                    .replace(container.id, fragment)
-                                    .commit()
-                                
-                                // To sync pages back to our view model, we would add a listener to the fragment.
-                                // In alpha releases, the API for page listeners is sometimes private or changing.
+                                val existingFragment = fragmentManager.findFragmentById(R.id.pdf_container)
+                                if (existingFragment == null) {
+                                    val fragment = PdfViewerFragment().apply {
+                                        arguments = Bundle().apply {
+                                            putParcelable("documentUri", currentState.uri)
+                                        }
+                                    }
+                                    fragmentManager.beginTransaction()
+                                        .replace(R.id.pdf_container, fragment)
+                                        .commit()
+                                }
                             }
                             container
                         },
                         update = { container ->
-                            // Update logic if needed
+                            val activity = container.context.findActivity()
+                            if (activity != null) {
+                                val fragment = activity.supportFragmentManager.findFragmentById(R.id.pdf_container) as? PdfViewerFragment
+                                if (fragment != null && fragment.documentUri != currentState.uri) {
+                                    fragment.documentUri = currentState.uri
+                                }
+                            }
                         }
                     )
                 }
@@ -144,4 +156,13 @@ fun ReaderTopBar(
             containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f)
         )
     )
+}
+
+private fun Context.findActivity(): FragmentActivity? {
+    var context = this
+    while (context is ContextWrapper) {
+        if (context is FragmentActivity) return context
+        context = context.baseContext
+    }
+    return null
 }

@@ -12,6 +12,11 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import androidx.core.content.FileProvider
+import java.io.File
+import java.io.FileNotFoundException
 import javax.inject.Inject
 
 sealed class ReaderUiState {
@@ -51,18 +56,37 @@ class ReaderViewModel @Inject constructor(
     private fun loadPdf(uriString: String) {
         viewModelScope.launch {
             try {
-                val uri = Uri.parse(uriString)
+                val originalUri = Uri.parse(uriString)
                 
                 // Try taking persistable permission if content URI
-                if (uri.scheme == "content" && !uriString.contains("media")) {
+                if (originalUri.scheme == "content" && !uriString.contains("media")) {
                     try {
                         context.contentResolver.takePersistableUriPermission(
-                            uri,
+                            originalUri,
                             android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
                         )
                     } catch (e: Exception) {
                         e.printStackTrace()
                     }
+                }
+
+                // Copy PDF to local cache so the isolated/sandboxed PDF renderer process can access it
+                val sharedUri = withContext(Dispatchers.IO) {
+                    val cacheFile = File(context.cacheDir, "temp_reader.pdf")
+                    if (cacheFile.exists()) {
+                        cacheFile.delete()
+                    }
+                    context.contentResolver.openInputStream(originalUri)?.use { inputStream ->
+                        cacheFile.outputStream().use { outputStream ->
+                            inputStream.copyTo(outputStream)
+                        }
+                    } ?: throw FileNotFoundException("Could not open PDF file")
+                    
+                    FileProvider.getUriForFile(
+                        context,
+                        "${context.packageName}.fileprovider",
+                        cacheFile
+                    )
                 }
 
                 // Query DB to see if we have history
@@ -75,12 +99,13 @@ class ReaderViewModel @Inject constructor(
 
                 _uiState.value = ReaderUiState.Success(
                     docId = docId,
-                    uri = uri,
+                    uri = sharedUri,
                     initialPage = initialPage
                 )
 
             } catch (e: Exception) {
-                _uiState.value = ReaderUiState.Error(e.message ?: "Failed to load PDF metadata")
+                e.printStackTrace()
+                _uiState.value = ReaderUiState.Error(e.message ?: "Failed to load PDF")
             }
         }
     }
