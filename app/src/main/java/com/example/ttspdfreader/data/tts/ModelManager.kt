@@ -33,7 +33,7 @@ class ModelManager @Inject constructor(
 
     private var isCancelled = false
 
-    private val modelsDir = File(context.filesDir, "models")
+    private val modelsDir = File(context.getExternalFilesDir(null), "models")
 
     val ggufFile = File(modelsDir, "neutts-air-Q8_0.gguf")
     val onnxFile = File(modelsDir, "neucodec-decoder-int8.onnx")
