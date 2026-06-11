@@ -10,12 +10,21 @@ android {
     namespace = "com.example.ttspdfreader"
     compileSdk = 36
     compileSdkExtension = 19
+    ndkVersion = "26.1.10909125"
     defaultConfig {
         applicationId = "com.example.ttspdfreader"
         minSdk = 28
         targetSdk = 36
         versionCode = 1
         versionName = "1.0"
+        ndk {
+            abiFilters += "arm64-v8a"
+        }
+        externalNativeBuild {
+            cmake {
+                arguments += listOf("-DANDROID_STL=c++_shared")
+            }
+        }
     }
 
     buildTypes {
@@ -39,6 +48,13 @@ android {
       resources {
         excludes += "/META-INF/{AL2.0,LGPL2.1}"
       }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
 }
 
@@ -106,4 +122,14 @@ dependencies {
   // AppCompat
   implementation("androidx.appcompat:appcompat:1.6.1")
   implementation("com.google.android.material:material:1.11.0")
+
+  // ONNX Runtime Android
+  implementation("com.microsoft.onnxruntime:onnxruntime-android:1.19.0")
+
+  // PDFBox for Android (Text Extraction)
+  implementation("com.tom-roush:pdfbox-android:2.0.27.0")
+
+  // Media (for Notification MediaStyle)
+  implementation("androidx.media:media:1.7.0")
 }
+

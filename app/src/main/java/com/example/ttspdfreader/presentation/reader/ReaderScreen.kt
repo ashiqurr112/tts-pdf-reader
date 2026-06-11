@@ -1,48 +1,61 @@
 package com.example.ttspdfreader.presentation.reader
 
+import android.content.Context
+import android.content.ContextWrapper
+import android.net.Uri
+import android.os.Bundle
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.*
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.FileProvider
+import androidx.fragment.app.FragmentActivity
+import androidx.fragment.app.FragmentContainerView
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.pdf.viewer.fragment.PdfViewerFragment
 import androidx.pdf.view.PdfView
-import android.content.Context
-import android.content.ContextWrapper
+import androidx.pdf.viewer.fragment.PdfViewerFragment
 import com.example.ttspdfreader.R
-import android.os.Bundle
-import androidx.compose.foundation.shape.CircleShape
+import com.example.ttspdfreader.service.TtsState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileNotFoundException
-import androidx.core.content.FileProvider
-
-import androidx.fragment.app.FragmentActivity
-import androidx.fragment.app.FragmentContainerView
-import androidx.compose.ui.viewinterop.AndroidView
-import android.net.Uri
-import androidx.compose.foundation.background
+import java.util.Locale
 
 @Composable
 fun ReaderScreen(
     onBack: () -> Unit,
+    onNavigateToDownload: () -> Unit,
     modifier: Modifier = Modifier,
     viewModel: ReaderViewModel = hiltViewModel()
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
-    
+
+    val ttsState by viewModel.ttsState.collectAsStateWithLifecycle()
+    val currentSentenceIndex by viewModel.currentSentenceIndex.collectAsStateWithLifecycle()
+    val sentences by viewModel.sentences.collectAsStateWithLifecycle()
+    val playbackSpeed by viewModel.playbackSpeed.collectAsStateWithLifecycle()
+    val servicePage by viewModel.servicePage.collectAsStateWithLifecycle()
+
     var sharedUri by remember { mutableStateOf<Uri?>(null) }
     var isCopying by remember { mutableStateOf(false) }
 
@@ -65,7 +78,7 @@ fun ReaderScreen(
                             inputStream.copyTo(outputStream)
                         }
                     } ?: throw FileNotFoundException("Could not open PDF file")
-                    
+
                     sharedUri = FileProvider.getUriForFile(
                         context,
                         "${context.packageName}.fileprovider",
@@ -81,6 +94,7 @@ fun ReaderScreen(
     }
 
     BackHandler {
+        viewModel.stopReading()
         onBack()
     }
 
@@ -93,7 +107,10 @@ fun ReaderScreen(
             } else {
                 ReaderTopBar(
                     title = "PDF Reader",
-                    onBack = onBack
+                    onBack = {
+                        viewModel.stopReading()
+                        onBack()
+                    }
                 )
             }
         }
@@ -166,12 +183,11 @@ fun ReaderScreen(
                                         val activity = ctx.findActivity()
                                         if (activity != null) {
                                             val fragmentManager = activity.supportFragmentManager
-                                            // Always clean up existing fragment first to prevent blank screens on reload
                                             val existingFragment = fragmentManager.findFragmentById(R.id.pdf_container)
                                             if (existingFragment != null) {
                                                 fragmentManager.beginTransaction().remove(existingFragment).commitNow()
                                             }
-                                            
+
                                             val fragment = TtsPdfViewerFragment().apply {
                                                 setDocumentUriToLoad(uri)
                                                 setInitialPage(currentState.initialPage)
@@ -179,20 +195,33 @@ fun ReaderScreen(
                                                     viewModel.onPageChanged(page)
                                                 }
                                             }
-                                            
+
                                             fragmentManager.beginTransaction()
                                                 .replace(R.id.pdf_container, fragment)
                                                 .commit()
                                         }
                                         container
                                     },
-                                    update = {}
+                                    update = { container ->
+                                        if (ttsState == TtsState.PLAYING || ttsState == TtsState.LOADING) {
+                                            val activity = container.context.findActivity()
+                                            if (activity != null) {
+                                                val fragment = activity.supportFragmentManager.findFragmentById(R.id.pdf_container) as? TtsPdfViewerFragment
+                                                if (fragment != null && servicePage != -1) {
+                                                    fragment.scrollToPage(servicePage)
+                                                }
+                                            }
+                                        }
+                                    }
                                 )
                             }
 
-                            // Floating circular back button at top start (overlaying the full-screen PDF view)
+                            // Floating back button
                             IconButton(
-                                onClick = onBack,
+                                onClick = {
+                                    viewModel.stopReading()
+                                    onBack()
+                                },
                                 modifier = Modifier
                                     .align(Alignment.TopStart)
                                     .padding(16.dp)
@@ -205,11 +234,198 @@ fun ReaderScreen(
                                     tint = MaterialTheme.colorScheme.onSurface
                                 )
                             }
+
+                            // TTS Bottom Control Panel
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.BottomCenter)
+                                    .fillMaxWidth()
+                                    .padding(16.dp)
+                                    .navigationBarsPadding()
+                            ) {
+                                val currentSentenceText = if (currentSentenceIndex in sentences.indices) {
+                                    sentences[currentSentenceIndex].text
+                                } else ""
+
+                                TtsControlPanel(
+                                    ttsState = ttsState,
+                                    currentSentenceText = currentSentenceText,
+                                    playbackSpeed = playbackSpeed,
+                                    hasModels = viewModel.hasDownloadedModels(),
+                                    onPlayPause = {
+                                        if (!viewModel.hasDownloadedModels()) {
+                                            onNavigateToDownload()
+                                        } else {
+                                            if (ttsState == TtsState.PLAYING) {
+                                                viewModel.pauseReading()
+                                            } else if (ttsState == TtsState.PAUSED) {
+                                                viewModel.resumeReading()
+                                            } else {
+                                                viewModel.startReading(currentState.uri, currentState.title)
+                                            }
+                                        }
+                                    },
+                                    onStop = { viewModel.stopReading() },
+                                    onPrev = { viewModel.skipPrev() },
+                                    onNext = { viewModel.skipNext() },
+                                    onSpeedChange = { viewModel.setSpeed(it) },
+                                    onNavigateToDownload = onNavigateToDownload
+                                )
+                            }
                         }
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+fun TtsControlPanel(
+    ttsState: TtsState,
+    currentSentenceText: String,
+    playbackSpeed: Float,
+    hasModels: Boolean,
+    onPlayPause: () -> Unit,
+    onStop: () -> Unit,
+    onPrev: () -> Unit,
+    onNext: () -> Unit,
+    onSpeedChange: (Float) -> Unit,
+    onNavigateToDownload: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var showSpeedDialog by remember { mutableStateOf(false) }
+
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(24.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.95f))
+            .padding(16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        // Sentence overlay text
+        if (currentSentenceText.isNotBlank() && ttsState != TtsState.IDLE) {
+            Text(
+                text = currentSentenceText,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 12.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.5f))
+                    .padding(12.dp)
+            )
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Speed Dialog Trigger
+            IconButton(onClick = { showSpeedDialog = true }) {
+                Icon(
+                    imageVector = Icons.Default.Speed,
+                    contentDescription = "Playback Speed",
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            }
+
+            // Prev Sentence
+            IconButton(
+                onClick = onPrev,
+                enabled = ttsState != TtsState.IDLE
+            ) {
+                Icon(
+                    imageVector = Icons.Default.SkipPrevious,
+                    contentDescription = "Previous Sentence"
+                )
+            }
+
+            // Play/Pause FAB
+            FloatingActionButton(
+                onClick = onPlayPause,
+                shape = CircleShape,
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary
+            ) {
+                val icon = when (ttsState) {
+                    TtsState.PLAYING -> Icons.Default.Pause
+                    TtsState.LOADING -> Icons.Default.HourglassEmpty
+                    else -> Icons.Default.PlayArrow
+                }
+                Icon(
+                    imageVector = icon,
+                    contentDescription = if (ttsState == TtsState.PLAYING) "Pause" else "Play",
+                    modifier = Modifier.size(28.dp)
+                )
+            }
+
+            // Next Sentence
+            IconButton(
+                onClick = onNext,
+                enabled = ttsState != TtsState.IDLE
+            ) {
+                Icon(
+                    imageVector = Icons.Default.SkipNext,
+                    contentDescription = "Next Sentence"
+                )
+            }
+
+            // Stop Button
+            IconButton(
+                onClick = onStop,
+                enabled = ttsState != TtsState.IDLE
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Stop,
+                    contentDescription = "Stop Reading",
+                    tint = MaterialTheme.colorScheme.error
+                )
+            }
+        }
+
+        // Inform user if models need download
+        if (!hasModels) {
+            Spacer(modifier = Modifier.height(8.dp))
+            TextButton(onClick = onNavigateToDownload) {
+                Icon(Icons.Default.CloudDownload, contentDescription = null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("TTS speech models required. Download now.")
+            }
+        }
+    }
+
+    if (showSpeedDialog) {
+        AlertDialog(
+            onDismissRequest = { showSpeedDialog = false },
+            title = { Text("Playback Speed") },
+            text = {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = String.format(Locale.US, "%.2fx", playbackSpeed),
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Slider(
+                        value = playbackSpeed,
+                        onValueChange = onSpeedChange,
+                        valueRange = 0.75f..2.0f,
+                        steps = 5
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showSpeedDialog = false }) {
+                    Text("OK")
+                }
+            }
+        )
     }
 }
 
@@ -257,6 +473,7 @@ class TtsPdfViewerFragment : PdfViewerFragment() {
     private var onPageChangedListener: ((Int) -> Unit)? = null
     private var initialPage: Int = 0
     private var documentUriToLoad: Uri? = null
+    private var pdfViewReference: PdfView? = null
 
     fun setOnPageChangedListener(listener: (Int) -> Unit) {
         this.onPageChangedListener = listener
@@ -280,14 +497,15 @@ class TtsPdfViewerFragment : PdfViewerFragment() {
     @OptIn(androidx.pdf.ExperimentalPdfApi::class)
     override fun onPdfViewCreated(pdfView: PdfView) {
         super.onPdfViewCreated(pdfView)
-        
+        this.pdfViewReference = pdfView
+
         // 1. Scroll to initial page when content loads
         pdfView.addOnFirstContentLoadListener {
             if (initialPage > 0) {
                 pdfView.scrollToPage(initialPage)
             }
         }
-        
+
         // 2. Save page progress when viewport changes
         pdfView.addOnViewportChangedListener(object : PdfView.OnViewportChangedListener {
             override fun onViewportChanged(
@@ -299,5 +517,16 @@ class TtsPdfViewerFragment : PdfViewerFragment() {
                 onPageChangedListener?.invoke(firstVisiblePage)
             }
         })
+    }
+
+    @OptIn(androidx.pdf.ExperimentalPdfApi::class)
+    fun scrollToPage(page: Int) {
+        pdfViewReference?.let { view ->
+            try {
+                view.scrollToPage(page)
+            } catch (e: Exception) {
+                // View might not be laid out yet
+            }
+        }
     }
 }

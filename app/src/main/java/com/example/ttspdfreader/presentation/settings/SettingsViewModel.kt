@@ -13,6 +13,10 @@ class SettingsViewModel @Inject constructor(
 
     val isDarkTheme: StateFlow<Boolean> = settingsManager.isDarkTheme
     val textSize: StateFlow<Float> = settingsManager.textSize
+    val ttsSpeed: StateFlow<Float> = settingsManager.ttsSpeed
+    val autoReadOnOpen: StateFlow<Boolean> = settingsManager.autoReadOnOpen
+    val hasDownloadedModels: StateFlow<Boolean> = settingsManager.hasDownloadedModels
+    val hasReferenceVoice: StateFlow<Boolean> = settingsManager.hasReferenceVoice
 
     fun setDarkTheme(enabled: Boolean) {
         settingsManager.setDarkTheme(enabled)
@@ -20,5 +24,13 @@ class SettingsViewModel @Inject constructor(
 
     fun setTextSize(size: Float) {
         settingsManager.setTextSize(size)
+    }
+
+    fun setTtsSpeed(speed: Float) {
+        settingsManager.setSpeed(speed)
+    }
+
+    fun setAutoReadOnOpen(enabled: Boolean) {
+        settingsManager.setAutoReadOnOpen(enabled)
     }
 }

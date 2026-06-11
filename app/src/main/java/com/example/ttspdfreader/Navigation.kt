@@ -22,6 +22,8 @@ import com.example.ttspdfreader.presentation.documents.DocumentsScreen
 import com.example.ttspdfreader.presentation.home.HomeScreen
 import com.example.ttspdfreader.presentation.reader.ReaderScreen
 import com.example.ttspdfreader.presentation.settings.SettingsScreen
+import com.example.ttspdfreader.presentation.tts.ModelDownloadScreen
+import com.example.ttspdfreader.presentation.tts.VoiceSetupScreen
 
 sealed class Screen(val route: String, val title: String, val icon: ImageVector) {
     object Home : Screen("home", "Home", Icons.Default.Home)
@@ -59,16 +61,10 @@ fun MainNavigation(
                             selected = currentDestination?.hierarchy?.any { it.route == screen.route } == true,
                             onClick = {
                                 navController.navigate(screen.route) {
-                                    // Pop up to the start destination of the graph to
-                                    // avoid building up a large stack of destinations
-                                    // on the back stack as users select items
                                     popUpTo(navController.graph.findStartDestination().id) {
                                         saveState = true
                                     }
-                                    // Avoid multiple copies of the same destination when
-                                    // reselecting the same item
                                     launchSingleTop = true
-                                    // Restore state when reselecting a previously selected item
                                     restoreState = true
                                 }
                             }
@@ -122,6 +118,9 @@ fun MainNavigation(
                 ReaderScreen(
                     onBack = {
                         navController.popBackStack()
+                    },
+                    onNavigateToDownload = {
+                        navController.navigate("model_download")
                     }
                 )
             }
@@ -131,7 +130,29 @@ fun MainNavigation(
                     onBack = {
                         navController.popBackStack()
                     },
+                    onNavigateToDownload = {
+                        navController.navigate("model_download")
+                    },
+                    onNavigateToVoiceSetup = {
+                        navController.navigate("voice_setup")
+                    },
                     modifier = Modifier.padding(bottom = innerPadding.calculateBottomPadding())
+                )
+            }
+
+            composable("model_download") {
+                ModelDownloadScreen(
+                    onBack = {
+                        navController.popBackStack()
+                    }
+                )
+            }
+
+            composable("voice_setup") {
+                VoiceSetupScreen(
+                    onBack = {
+                        navController.popBackStack()
+                    }
                 )
             }
         }
