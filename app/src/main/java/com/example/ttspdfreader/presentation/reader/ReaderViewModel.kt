@@ -18,6 +18,7 @@ import androidx.core.content.FileProvider
 import java.io.File
 import java.io.FileNotFoundException
 import javax.inject.Inject
+import com.example.ttspdfreader.domain.usecase.OpenPdfUseCase
 
 sealed class ReaderUiState {
     object Loading : ReaderUiState()
@@ -33,6 +34,7 @@ sealed class ReaderUiState {
 class ReaderViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val repository: IPdfFileRepository,
+    private val openPdfUseCase: OpenPdfUseCase,
     private val saveLastPageUseCase: SaveLastPageUseCase,
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
@@ -56,6 +58,8 @@ class ReaderViewModel @Inject constructor(
     private fun loadPdf(uriString: String) {
         viewModelScope.launch {
             try {
+                // Register / update last opened in recent files database
+                val doc = openPdfUseCase(uriString)
                 val originalUri = Uri.parse(uriString)
                 
                 // Try taking persistable permission if content URI
@@ -70,18 +74,13 @@ class ReaderViewModel @Inject constructor(
                     }
                 }
 
-                // Query DB to see if we have history
-                val existingDoc = repository.getFileByPath(uriString)
-                val initialPage = existingDoc?.lastPage ?: 0
-                val docId = existingDoc?.id ?: -1L
-                
-                currentDocId = docId
-                currentPage = initialPage
+                currentDocId = doc.id
+                currentPage = doc.lastPage
 
                 _uiState.value = ReaderUiState.Success(
-                    docId = docId,
+                    docId = doc.id,
                     uri = originalUri,
-                    initialPage = initialPage
+                    initialPage = doc.lastPage
                 )
 
             } catch (e: Exception) {
