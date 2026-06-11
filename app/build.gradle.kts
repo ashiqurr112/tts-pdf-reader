@@ -96,4 +96,8 @@ dependencies {
   implementation(libs.hilt.android)
   "ksp"(libs.hilt.compiler)
   implementation(libs.hilt.navigation.compose)
+
+  // PDF Viewer
+  implementation("androidx.pdf:pdf-viewer:1.0.0-alpha18")
+  implementation("androidx.pdf:pdf-compose:1.0.0-alpha18")
 }
