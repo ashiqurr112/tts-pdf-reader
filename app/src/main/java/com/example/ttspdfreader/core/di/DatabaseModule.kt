@@ -22,7 +22,9 @@ object DatabaseModule {
             context,
             PdfDatabase::class.java,
             "pdf_reader_db"
-        ).build()
+        )
+        .fallbackToDestructiveMigration()
+        .build()
     }
 
     @Provides

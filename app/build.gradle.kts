@@ -102,4 +102,7 @@ dependencies {
   implementation("androidx.pdf:pdf-viewer:1.0.0-alpha18")
   implementation("androidx.pdf:pdf-viewer-fragment:1.0.0-alpha18")
   implementation("androidx.pdf:pdf-compose:1.0.0-alpha18")
+
+  // AppCompat
+  implementation("androidx.appcompat:appcompat:1.6.1")
 }
