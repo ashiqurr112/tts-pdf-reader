@@ -1,6 +1,6 @@
 package com.example.ttspdfreader
 
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Home
@@ -81,7 +81,7 @@ fun MainNavigation(
         NavHost(
             navController = navController,
             startDestination = Screen.Home.route,
-            modifier = Modifier.padding(innerPadding)
+            modifier = Modifier.fillMaxSize()
         ) {
             composable(Screen.Home.route) {
                 HomeScreen(
@@ -90,7 +90,17 @@ fun MainNavigation(
                     },
                     onNavigateToSettings = {
                         navController.navigate(Screen.Settings.route)
-                    }
+                    },
+                    onNavigateToDocuments = {
+                        navController.navigate(Screen.Documents.route) {
+                            popUpTo(navController.graph.findStartDestination().id) {
+                                saveState = true
+                            }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
+                    },
+                    modifier = Modifier.padding(bottom = innerPadding.calculateBottomPadding())
                 )
             }
             
@@ -98,7 +108,8 @@ fun MainNavigation(
                 DocumentsScreen(
                     onNavigateToReader = { encodedUri ->
                         navController.navigate("reader/$encodedUri")
-                    }
+                    },
+                    modifier = Modifier.padding(bottom = innerPadding.calculateBottomPadding())
                 )
             }
 
@@ -119,7 +130,8 @@ fun MainNavigation(
                 SettingsScreen(
                     onBack = {
                         navController.popBackStack()
-                    }
+                    },
+                    modifier = Modifier.padding(bottom = innerPadding.calculateBottomPadding())
                 )
             }
         }

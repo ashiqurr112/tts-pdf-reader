@@ -70,25 +70,6 @@ class ReaderViewModel @Inject constructor(
                     }
                 }
 
-                // Copy PDF to local cache so the isolated/sandboxed PDF renderer process can access it
-                val sharedUri = withContext(Dispatchers.IO) {
-                    val cacheFile = File(context.cacheDir, "temp_reader.pdf")
-                    if (cacheFile.exists()) {
-                        cacheFile.delete()
-                    }
-                    context.contentResolver.openInputStream(originalUri)?.use { inputStream ->
-                        cacheFile.outputStream().use { outputStream ->
-                            inputStream.copyTo(outputStream)
-                        }
-                    } ?: throw FileNotFoundException("Could not open PDF file")
-                    
-                    FileProvider.getUriForFile(
-                        context,
-                        "${context.packageName}.fileprovider",
-                        cacheFile
-                    )
-                }
-
                 // Query DB to see if we have history
                 val existingDoc = repository.getFileByPath(uriString)
                 val initialPage = existingDoc?.lastPage ?: 0
@@ -99,7 +80,7 @@ class ReaderViewModel @Inject constructor(
 
                 _uiState.value = ReaderUiState.Success(
                     docId = docId,
-                    uri = sharedUri,
+                    uri = originalUri,
                     initialPage = initialPage
                 )
 

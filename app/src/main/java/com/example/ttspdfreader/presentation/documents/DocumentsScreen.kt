@@ -33,6 +33,7 @@ import java.util.*
 @Composable
 fun DocumentsScreen(
     onNavigateToReader: (String) -> Unit,
+    modifier: Modifier = Modifier,
     viewModel: DocumentsViewModel = hiltViewModel()
 ) {
     val context = LocalContext.current
@@ -76,6 +77,7 @@ fun DocumentsScreen(
     }
 
     Scaffold(
+        modifier = modifier,
         topBar = {
             TopAppBar(
                 title = { Text("Documents") },
