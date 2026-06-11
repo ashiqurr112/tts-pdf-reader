@@ -49,22 +49,32 @@ fun HomeScreen(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         uri?.let {
-            try {
-                context.contentResolver.takePersistableUriPermission(
-                    it,
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION
-                )
+            val cachedFile = try {
+                val file = java.io.File(context.cacheDir, "temp_picked.pdf")
+                if (file.exists()) {
+                    file.delete()
+                }
+                context.contentResolver.openInputStream(it)?.use { input ->
+                    file.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                }
+                file
             } catch (e: Exception) {
                 e.printStackTrace()
+                null
             }
-            viewModel.openPdf(
-                uriString = it.toString(),
-                onSuccess = { doc ->
-                    val encoded = Uri.encode(doc.path)
-                    onNavigateToReader(encoded)
-                },
-                onError = { /* Handle error */ }
-            )
+
+            if (cachedFile != null) {
+                viewModel.openPdf(
+                    uriString = Uri.fromFile(cachedFile).toString(),
+                    onSuccess = { doc ->
+                        val encoded = Uri.encode(doc.path)
+                        onNavigateToReader(encoded)
+                    },
+                    onError = { /* Handle error */ }
+                )
+            }
         }
     }
 
