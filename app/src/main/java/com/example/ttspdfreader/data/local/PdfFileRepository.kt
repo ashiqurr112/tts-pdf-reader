@@ -24,6 +24,6 @@ class PdfFileRepository @Inject constructor(
     }
 
     override suspend fun updateLastPage(id: Long, lastPage: Int) {
-        recentFilesDao.updateLastPage(id, lastPage)
+        recentFilesDao.updateLastPage(id, lastPage, System.currentTimeMillis())
     }
 }

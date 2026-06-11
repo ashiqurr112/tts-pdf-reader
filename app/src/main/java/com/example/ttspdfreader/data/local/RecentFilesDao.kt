@@ -18,7 +18,7 @@ interface RecentFilesDao {
     suspend fun upsertFile(pdfDocument: PdfDocument): Long
 
     @Query("UPDATE recent_files SET lastPage = :lastPage, lastOpened = :lastOpened WHERE id = :id")
-    suspend fun updateLastPage(id: Long, lastPage: Int, lastOpened: Long = System.currentTimeMillis())
+    suspend fun updateLastPage(id: Long, lastPage: Int, lastOpened: Long)
 
     @Query("DELETE FROM recent_files WHERE id = :id")
     suspend fun deleteFile(id: Long)
