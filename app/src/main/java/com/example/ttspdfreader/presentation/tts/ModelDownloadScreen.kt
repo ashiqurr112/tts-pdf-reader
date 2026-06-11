@@ -208,17 +208,13 @@ fun ModelDownloadScreen(
                             }
                         }
                         is DownloadState.Downloading -> {
-                            val animatedProgress by animateFloatAsState(
-                                targetValue = state.progress,
-                                label = "download_progress"
-                            )
                             val progressPercent = (state.progress * 100).toInt()
                             val downloadedMb = state.bytesDownloaded.toFloat() / (1024 * 1024)
                             val totalMb = state.totalBytes.toFloat() / (1024 * 1024)
 
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 LinearProgressIndicator(
-                                    progress = { animatedProgress },
+                                    progress = { state.progress },
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .height(10.dp)

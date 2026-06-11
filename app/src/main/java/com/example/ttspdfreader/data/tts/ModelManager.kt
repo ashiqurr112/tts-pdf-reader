@@ -166,7 +166,7 @@ class ModelManager @Inject constructor(
             val buffer = ByteArray(16384)
             var bytesRead: Int
             var bytesDownloaded = if (isResume) existingLength else 0L
-
+            var lastUpdateMillis = 0L
             while (input.read(buffer).also { bytesRead = it } != -1) {
                 if (isCancelled) {
                     break
@@ -175,9 +175,13 @@ class ModelManager @Inject constructor(
                 bytesDownloaded += bytesRead
 
                 if (totalBytes > 0) {
-                    val fileProgress = bytesDownloaded.toFloat() / totalBytes
-                    val overallProgress = progressOffset + (fileProgress * progressWeight)
-                    _downloadState.value = DownloadState.Downloading(overallProgress, bytesDownloaded, totalBytes)
+                    val currentTime = System.currentTimeMillis()
+                    if (currentTime - lastUpdateMillis >= 150L || bytesDownloaded == totalBytes) {
+                        lastUpdateMillis = currentTime
+                        val fileProgress = bytesDownloaded.toFloat() / totalBytes
+                        val overallProgress = progressOffset + (fileProgress * progressWeight)
+                        _downloadState.value = DownloadState.Downloading(overallProgress, bytesDownloaded, totalBytes)
+                    }
                 }
             }
 
