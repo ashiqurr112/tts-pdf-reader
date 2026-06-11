@@ -19,6 +19,7 @@ import android.os.IBinder
 import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import com.example.ttspdfreader.MainActivity
 import com.example.ttspdfreader.R
 import com.example.ttspdfreader.data.local.SettingsManager
@@ -126,7 +127,12 @@ class ReadAloudService : Service(), AudioManager.OnAudioFocusChangeListener {
         val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
         wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "TtsPdfReader::ReadAloudWakeLock")
 
-        registerReceiver(noisyReceiver, IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY))
+        ContextCompat.registerReceiver(
+            this,
+            noisyReceiver,
+            IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY),
+            ContextCompat.RECEIVER_NOT_EXPORTED
+        )
         
         // Initialize playback speed from preferences
         _playbackSpeed.value = settingsManager.getSpeed()
@@ -153,10 +159,30 @@ class ReadAloudService : Service(), AudioManager.OnAudioFocusChangeListener {
             audioRenderer.setSpeed(_playbackSpeed.value)
 
             // Start foreground immediately to meet Android OS requirements
-            startForeground(NOTIFICATION_ID, buildNotification())
+            try {
+                startForeground(NOTIFICATION_ID, buildNotification())
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to start foreground service", e)
+                _ttsState.value = TtsState.ERROR
+                return@launch
+            }
 
             if (wakeLock?.isHeld == false) {
                 wakeLock?.acquire(10 * 60 * 1000L /*10 minutes*/)
+            }
+
+            // Pre-initialize the TTS engine before reading
+            try {
+                val engineReady = ttsEngine.init()
+                if (!engineReady) {
+                    Log.e(TAG, "TTS engine failed to initialize")
+                    _ttsState.value = TtsState.ERROR
+                    return@launch
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "TTS engine init crashed", e)
+                _ttsState.value = TtsState.ERROR
+                return@launch
             }
 
             loadPageText(startPage, startSentenceIndex)
@@ -168,20 +194,36 @@ class ReadAloudService : Service(), AudioManager.OnAudioFocusChangeListener {
         _currentPage.value = pageIndex
         updateNotification()
 
-        val uri = pdfUri ?: return
+        val uri = pdfUri ?: run {
+            Log.e(TAG, "PDF URI is null, cannot load page text")
+            _ttsState.value = TtsState.ERROR
+            return
+        }
         serviceScope.launch {
             try {
                 val pageText = withContext(Dispatchers.IO) {
-                    contentResolver.openInputStream(uri)?.use { input ->
-                        PDDocument.load(input).use { document ->
-                            totalPagesCount = document.numberOfPages
-                            val stripper = PDFTextStripper().apply {
-                                startPage = pageIndex + 1
-                                endPage = pageIndex + 1
+                    try {
+                        contentResolver.openInputStream(uri)?.use { input ->
+                            PDDocument.load(input).use { document ->
+                                totalPagesCount = document.numberOfPages
+                                val stripper = PDFTextStripper().apply {
+                                    startPage = pageIndex + 1
+                                    endPage = pageIndex + 1
+                                }
+                                stripper.getText(document)
                             }
-                            stripper.getText(document)
-                        }
-                    } ?: ""
+                        } ?: ""
+                    } catch (securityEx: SecurityException) {
+                        Log.e(TAG, "SecurityException opening PDF URI - permission may have been revoked", securityEx)
+                        ""
+                    }
+                }
+
+                if (pageText.isBlank() && totalPagesCount == 0) {
+                    Log.e(TAG, "Could not read PDF - URI may be invalid or permission revoked")
+                    _ttsState.value = TtsState.ERROR
+                    updateNotification()
+                    return@launch
                 }
 
                 val chunkedSentences = sentenceChunker.chunk(pageText)
@@ -235,15 +277,24 @@ class ReadAloudService : Service(), AudioManager.OnAudioFocusChangeListener {
         playbackJob = serviceScope.launch {
             try {
                 ttsEngine.setReferenceVoice(loadReferenceVoiceTokens())
-                
-                val audioFlow = ttsEngine.synthesize(sentence.text, _playbackSpeed.value)
-                    .catch { e ->
-                        Log.e(TAG, "Synthesis failed", e)
-                        _ttsState.value = TtsState.ERROR
-                        updateNotification()
-                    }
 
-                audioRenderer.play(audioFlow) {
+                // Safely attempt synthesis - init may fail if native libs can't load
+                val audioFlow = try {
+                    ttsEngine.synthesize(sentence.text, _playbackSpeed.value)
+                } catch (initError: Exception) {
+                    Log.e(TAG, "TTS synthesis/init failed", initError)
+                    _ttsState.value = TtsState.ERROR
+                    updateNotification()
+                    return@launch
+                }
+
+                val safeAudioFlow = audioFlow.catch { e ->
+                    Log.e(TAG, "Synthesis stream failed", e)
+                    _ttsState.value = TtsState.ERROR
+                    updateNotification()
+                }
+
+                audioRenderer.play(safeAudioFlow) {
                     // Completion callback of playback
                     serviceScope.launch {
                         if (_ttsState.value == TtsState.PLAYING) {
@@ -481,11 +532,23 @@ class ReadAloudService : Service(), AudioManager.OnAudioFocusChangeListener {
 
     override fun onDestroy() {
         super.onDestroy()
-        unregisterReceiver(noisyReceiver)
+        try {
+            unregisterReceiver(noisyReceiver)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error unregistering receiver", e)
+        }
         stopReading()
         serviceScope.launch {
-            audioRenderer.release()
-            ttsEngine.release()
+            try {
+                audioRenderer.release()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error releasing audio renderer", e)
+            }
+            try {
+                ttsEngine.release()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error releasing TTS engine", e)
+            }
         }
     }
 }

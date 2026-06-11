@@ -261,7 +261,8 @@ fun ReaderScreen(
                                             } else if (ttsState == TtsState.PAUSED) {
                                                 viewModel.resumeReading()
                                             } else {
-                                                viewModel.startReading(currentState.uri, currentState.title)
+                                                // Use the cached FileProvider URI for reliable access from background service
+                                                viewModel.startReading(uri, currentState.title)
                                             }
                                         }
                                     },

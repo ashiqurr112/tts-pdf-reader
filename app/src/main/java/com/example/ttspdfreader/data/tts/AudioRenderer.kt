@@ -70,7 +70,21 @@ class AudioRenderer @Inject constructor() {
     suspend fun play(audioChunks: Flow<FloatArray>, onComplete: () -> Unit = {}): Job {
         init()
         isPlaying = true
-        audioTrack?.play()
+        try {
+            audioTrack?.let { track ->
+                if (track.playState != AudioTrack.PLAYSTATE_PLAYING) {
+                    track.play()
+                }
+            }
+        } catch (e: IllegalStateException) {
+            Log.e(TAG, "AudioTrack play failed, reinitializing", e)
+            mutex.withLock {
+                audioTrack?.release()
+                audioTrack = null
+            }
+            init()
+            audioTrack?.play()
+        }
 
         return CoroutineScope(Dispatchers.Default).launch {
             try {

@@ -28,10 +28,12 @@ class NeuTTSEngine @Inject constructor(
 ) {
     companion object {
         private const val TAG = "NeuTTSEngine"
+        private var nativeLibLoaded = false
 
         init {
             try {
                 System.loadLibrary("neutts_jni")
+                nativeLibLoaded = true
                 Log.i(TAG, "Loaded neutts_jni native library successfully.")
             } catch (e: UnsatisfiedLinkError) {
                 Log.e(TAG, "Failed to load neutts_jni native library", e)
@@ -64,6 +66,11 @@ class NeuTTSEngine @Inject constructor(
     suspend fun init(): Boolean = withContext(nativeDispatcher) {
         engineMutex.withLock {
             if (isInitialized) return@withLock true
+
+            if (!nativeLibLoaded) {
+                Log.e(TAG, "Cannot initialize NeuTTSEngine: native library not loaded.")
+                return@withLock false
+            }
 
             if (!modelManager.modelsExist()) {
                 Log.e(TAG, "Models do not exist. Cannot initialize NeuTTSEngine.")
@@ -106,6 +113,9 @@ class NeuTTSEngine @Inject constructor(
                 isInitialized = true
                 Log.i(TAG, "NeuTTSEngine initialized successfully.")
                 return@withLock true
+            } catch (e: UnsatisfiedLinkError) {
+                Log.e(TAG, "Native method not found - library may be corrupted", e)
+                return@withLock false
             } catch (e: Exception) {
                 Log.e(TAG, "Error initializing NeuTTSEngine", e)
                 releaseInternal()
@@ -158,8 +168,17 @@ class NeuTTSEngine @Inject constructor(
             }
         }
 
+        if (!nativeLibLoaded) {
+            throw IllegalStateException("Native library not loaded")
+        }
+
         val phonemes = withContext(nativeDispatcher) {
-            nativePhonemeize(text, "en-us")
+            try {
+                nativePhonemeize(text, "en-us")
+            } catch (e: UnsatisfiedLinkError) {
+                Log.e(TAG, "nativePhonemeize failed - library issue", e)
+                ""
+            }
         }
 
         if (phonemes.isBlank()) {
@@ -168,7 +187,12 @@ class NeuTTSEngine @Inject constructor(
 
         // Generate tokens from Llama model
         val tokens = withContext(nativeDispatcher) {
-            nativeGenerate(llamaCtxHandle, phonemes, referenceVoiceTokens, speed)
+            try {
+                nativeGenerate(llamaCtxHandle, phonemes, referenceVoiceTokens, speed)
+            } catch (e: UnsatisfiedLinkError) {
+                Log.e(TAG, "nativeGenerate failed - library issue", e)
+                null
+            }
         }
 
         if (tokens == null || tokens.isEmpty()) {
