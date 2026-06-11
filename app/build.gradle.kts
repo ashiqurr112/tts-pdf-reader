@@ -9,6 +9,7 @@ plugins {
 android {
     namespace = "com.example.ttspdfreader"
     compileSdk = 36
+    compileSdkExtension = 19
     defaultConfig {
         applicationId = "com.example.ttspdfreader"
         minSdk = 24
