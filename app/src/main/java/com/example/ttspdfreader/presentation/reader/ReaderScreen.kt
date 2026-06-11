@@ -173,6 +173,11 @@ fun ReaderScreen(
                                             }
                                             
                                             val fragment = object : PdfViewerFragment() {
+                                                override fun onCreate(savedInstanceState: Bundle?) {
+                                                    super.onCreate(savedInstanceState)
+                                                    documentUri = uri
+                                                }
+
                                                 @OptIn(androidx.pdf.ExperimentalPdfApi::class)
                                                 override fun onPdfViewCreated(pdfView: PdfView) {
                                                     super.onPdfViewCreated(pdfView)
@@ -197,10 +202,6 @@ fun ReaderScreen(
                                                         }
                                                     })
                                                 }
-                                            }.apply {
-                                                arguments = Bundle().apply {
-                                                    putParcelable("documentUri", uri)
-                                                }
                                             }
                                             
                                             fragmentManager.beginTransaction()
@@ -209,15 +210,7 @@ fun ReaderScreen(
                                         }
                                         container
                                     },
-                                    update = { container ->
-                                        val activity = container.context.findActivity()
-                                        if (activity != null) {
-                                            val fragment = activity.supportFragmentManager.findFragmentById(R.id.pdf_container) as? PdfViewerFragment
-                                            if (fragment != null && fragment.documentUri != uri) {
-                                                fragment.documentUri = uri
-                                            }
-                                        }
-                                    }
+                                    update = {}
                                 )
                             }
 
