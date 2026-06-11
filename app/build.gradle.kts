@@ -12,7 +12,7 @@ android {
     compileSdkExtension = 19
     defaultConfig {
         applicationId = "com.example.ttspdfreader"
-        minSdk = 24
+        minSdk = 28
         targetSdk = 36
         versionCode = 1
         versionName = "1.0"
