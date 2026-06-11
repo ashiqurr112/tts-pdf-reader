@@ -39,8 +39,8 @@ class ModelManager @Inject constructor(
     val onnxFile = File(modelsDir, "neucodec-decoder-int8.onnx")
 
     // Download URLs (can be updated or configured)
-    private val ggufUrl = "https://huggingface.co/altts/neotts-air-GGUF/resolve/main/neutts-air-Q8_0.gguf"
-    private val onnxUrl = "https://huggingface.co/onnx-community/neucodec-decoder-int8/resolve/main/model.onnx"
+    private val ggufUrl = "https://huggingface.co/neuphonic/neutts-air-q8-gguf/resolve/main/neutts-air-Q8_0.gguf"
+    private val onnxUrl = "https://huggingface.co/neuphonic/neucodec-onnx-decoder-int8/resolve/main/model.onnx"
 
     fun modelsExist(): Boolean {
         return ggufFile.exists() && ggufFile.length() > 0 &&
