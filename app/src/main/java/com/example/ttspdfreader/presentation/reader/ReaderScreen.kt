@@ -172,35 +172,11 @@ fun ReaderScreen(
                                                 fragmentManager.beginTransaction().remove(existingFragment).commitNow()
                                             }
                                             
-                                            val fragment = object : PdfViewerFragment() {
-                                                override fun onCreate(savedInstanceState: Bundle?) {
-                                                    super.onCreate(savedInstanceState)
-                                                    documentUri = uri
-                                                }
-
-                                                @OptIn(androidx.pdf.ExperimentalPdfApi::class)
-                                                override fun onPdfViewCreated(pdfView: PdfView) {
-                                                    super.onPdfViewCreated(pdfView)
-                                                    
-                                                    // 1. Scroll to initial page when content loads
-                                                    pdfView.addOnFirstContentLoadListener {
-                                                        val page = currentState.initialPage
-                                                        if (page > 0) {
-                                                            pdfView.scrollToPage(page)
-                                                        }
-                                                    }
-                                                    
-                                                    // 2. Save page progress when viewport changes
-                                                    pdfView.addOnViewportChangedListener(object : PdfView.OnViewportChangedListener {
-                                                        override fun onViewportChanged(
-                                                            firstVisiblePage: Int,
-                                                            visiblePagesCount: Int,
-                                                            pageLocations: android.util.SparseArray<android.graphics.RectF>,
-                                                            zoomLevel: Float
-                                                        ) {
-                                                            viewModel.onPageChanged(firstVisiblePage)
-                                                        }
-                                                    })
+                                            val fragment = TtsPdfViewerFragment().apply {
+                                                setDocumentUriToLoad(uri)
+                                                setInitialPage(currentState.initialPage)
+                                                setOnPageChangedListener { page ->
+                                                    viewModel.onPageChanged(page)
                                                 }
                                             }
                                             
@@ -275,4 +251,53 @@ private fun Context.findActivity(): FragmentActivity? {
         context = context.baseContext
     }
     return null
+}
+
+class TtsPdfViewerFragment : PdfViewerFragment() {
+    private var onPageChangedListener: ((Int) -> Unit)? = null
+    private var initialPage: Int = 0
+    private var documentUriToLoad: Uri? = null
+
+    fun setOnPageChangedListener(listener: (Int) -> Unit) {
+        this.onPageChangedListener = listener
+    }
+
+    fun setInitialPage(page: Int) {
+        this.initialPage = page
+    }
+
+    fun setDocumentUriToLoad(uri: Uri) {
+        this.documentUriToLoad = uri
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        documentUriToLoad?.let { uri ->
+            documentUri = uri
+        }
+    }
+
+    @OptIn(androidx.pdf.ExperimentalPdfApi::class)
+    override fun onPdfViewCreated(pdfView: PdfView) {
+        super.onPdfViewCreated(pdfView)
+        
+        // 1. Scroll to initial page when content loads
+        pdfView.addOnFirstContentLoadListener {
+            if (initialPage > 0) {
+                pdfView.scrollToPage(initialPage)
+            }
+        }
+        
+        // 2. Save page progress when viewport changes
+        pdfView.addOnViewportChangedListener(object : PdfView.OnViewportChangedListener {
+            override fun onViewportChanged(
+                firstVisiblePage: Int,
+                visiblePagesCount: Int,
+                pageLocations: android.util.SparseArray<android.graphics.RectF>,
+                zoomLevel: Float
+            ) {
+                onPageChangedListener?.invoke(firstVisiblePage)
+            }
+        })
+    }
 }
