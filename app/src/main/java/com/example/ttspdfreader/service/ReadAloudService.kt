@@ -106,6 +106,9 @@ class ReadAloudService : Service(), AudioManager.OnAudioFocusChangeListener {
 
     private var pdfUri: Uri? = null
     private var totalPagesCount = 0
+    // Cache of reference voice tokens loaded from disk. Populated once when
+    // playback begins so we don't hit the file system on every sentence.
+    private var cachedReferenceVoiceTokens: IntArray? = null
 
     inner class LocalBinder : Binder() {
         fun getService(): ReadAloudService = this@ReadAloudService
@@ -184,6 +187,11 @@ class ReadAloudService : Service(), AudioManager.OnAudioFocusChangeListener {
                 _ttsState.value = TtsState.ERROR
                 return@launch
             }
+
+            // Load and cache reference voice tokens once here rather than
+            // re-reading the file from disk on every sentence in readSentence().
+            cachedReferenceVoiceTokens = loadReferenceVoiceTokens()
+            ttsEngine.setReferenceVoice(cachedReferenceVoiceTokens)
 
             loadPageText(startPage, startSentenceIndex)
         }
@@ -276,8 +284,6 @@ class ReadAloudService : Service(), AudioManager.OnAudioFocusChangeListener {
         playbackJob?.cancel()
         playbackJob = serviceScope.launch {
             try {
-                ttsEngine.setReferenceVoice(loadReferenceVoiceTokens())
-
                 // Safely attempt synthesis - init may fail if native libs can't load
                 val audioFlow = try {
                     ttsEngine.synthesize(sentence.text, _playbackSpeed.value)
@@ -316,7 +322,15 @@ class ReadAloudService : Service(), AudioManager.OnAudioFocusChangeListener {
             try {
                 tokensFile.readBytes().let { bytes ->
                     val ints = IntArray(bytes.size / 4)
-                    java.nio.ByteBuffer.wrap(bytes).asIntBuffer().get(ints)
+                    // FIX: must specify LITTLE_ENDIAN to match the byte order used
+                    // when tokens are written in VoiceSetupViewModel.saveClonedVoice().
+                    // Without this the JVM default (BIG_ENDIAN) silently reverses every
+                    // token's bytes, feeding garbage values into nativeGenerate() and
+                    // producing audio that doesn't resemble the cloned voice at all.
+                    java.nio.ByteBuffer.wrap(bytes)
+                        .order(java.nio.ByteOrder.LITTLE_ENDIAN)
+                        .asIntBuffer()
+                        .get(ints)
                     return@withContext ints
                 }
             } catch (e: Exception) {

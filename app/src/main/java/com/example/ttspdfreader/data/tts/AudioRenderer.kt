@@ -25,8 +25,22 @@ class AudioRenderer @Inject constructor() {
 
     private var audioTrack: AudioTrack? = null
     private val mutex = Mutex()
+
+    // FIX 1: @Volatile so the write() loop on Dispatchers.Default sees the flag
+    // immediately when pause()/stop() set it to false on another thread, eliminating
+    // the data race that caused audio to keep playing after pause/stop.
+    @Volatile
     private var isPlaying = false
     private var playbackSpeed = 1.0f
+
+    // FIX 2: Track the internal playback job so pause() and stop() can cancel it.
+    // Previously play() created a detached CoroutineScope(Dispatchers.Default) whose
+    // Job was returned to (and ignored by) ReadAloudService. Cancelling playbackJob in
+    // the service only killed the serviceScope coroutine; the renderer kept collecting
+    // the audio flow and calling write() — and, critically, always fired onComplete(),
+    // advancing to the next sentence even after a pause or skip.
+    private var rendererJob: Job? = null
+    private val rendererScope = CoroutineScope(Dispatchers.Default)
 
     suspend fun init() {
         mutex.withLock {
@@ -69,7 +83,16 @@ class AudioRenderer @Inject constructor() {
 
     suspend fun play(audioChunks: Flow<FloatArray>, onComplete: () -> Unit = {}): Job {
         init()
+
+        // FIX: cancel any still-running renderer job before starting a new one,
+        // so stale audio from a previous sentence can't fire onComplete() late.
+        rendererJob?.cancel()
+
+        // FIX: set isPlaying inside the same logical section as the job launch so
+        // there is no window where the flag is true but the track hasn't started yet,
+        // and no window where a concurrent pause() races with this assignment.
         isPlaying = true
+
         try {
             audioTrack?.let { track ->
                 if (track.playState != AudioTrack.PLAYSTATE_PLAYING) {
@@ -86,7 +109,9 @@ class AudioRenderer @Inject constructor() {
             audioTrack?.play()
         }
 
-        return CoroutineScope(Dispatchers.Default).launch {
+        // FIX: use the shared rendererScope (not a fresh detached scope) so the
+        // job is reachable and cancellable via rendererJob.
+        rendererJob = rendererScope.launch {
             try {
                 audioChunks.collect { chunk ->
                     write(chunk)
@@ -95,9 +120,16 @@ class AudioRenderer @Inject constructor() {
             } catch (e: Exception) {
                 Log.e(TAG, "Error during audio playback collection", e)
             } finally {
-                onComplete()
+                // FIX: only call onComplete() if we are still in a playing state,
+                // i.e. the job finished naturally rather than being cancelled by
+                // pause()/stop()/skip(). This prevents the "advance to next sentence
+                // after pause" bug where the detached job always fired onComplete.
+                if (isPlaying) {
+                    onComplete()
+                }
             }
         }
+        return rendererJob!!
     }
 
     private fun write(chunk: FloatArray) {
@@ -116,7 +148,6 @@ class AudioRenderer @Inject constructor() {
     private suspend fun waitForPlaybackComplete() {
         val track = audioTrack ?: return
         try {
-            // Wait until the audio track head position matches the play length
             val bufferSize = track.bufferSizeInFrames
             val sampleRate = track.sampleRate
             val delayMs = (bufferSize.toFloat() / sampleRate * 1000).toLong()
@@ -127,6 +158,10 @@ class AudioRenderer @Inject constructor() {
     }
 
     suspend fun pause() {
+        // FIX: cancel the renderer job first so write() stops and onComplete() is
+        // suppressed, then update the flag and pause the hardware track.
+        rendererJob?.cancel()
+        rendererJob = null
         mutex.withLock {
             isPlaying = false
             audioTrack?.pause()
@@ -141,6 +176,9 @@ class AudioRenderer @Inject constructor() {
     }
 
     suspend fun stop() {
+        // FIX: same as pause — cancel job before touching the flag.
+        rendererJob?.cancel()
+        rendererJob = null
         mutex.withLock {
             isPlaying = false
             audioTrack?.apply {
@@ -173,6 +211,8 @@ class AudioRenderer @Inject constructor() {
     }
 
     suspend fun release() {
+        rendererJob?.cancel()
+        rendererJob = null
         mutex.withLock {
             isPlaying = false
             audioTrack?.apply {

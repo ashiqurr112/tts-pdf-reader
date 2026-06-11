@@ -47,6 +47,11 @@ fun VoiceSetupScreen(
     val amplitude by viewModel.amplitude.collectAsStateWithLifecycle()
 
     var transcription by remember { mutableStateOf("") }
+    // FIX: Track whether we are in the "encoding" phase (after Save is tapped but before
+    //      the NeuCodec encoder has finished). During this time we disable the button
+    //      and show an in-progress indicator so the user doesn't tap twice.
+    var isSaving by remember { mutableStateOf(false) }
+
     var hasMicPermission by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
@@ -62,6 +67,30 @@ fun VoiceSetupScreen(
             }
         }
     )
+
+    // FIX: Observe recordingState to:
+    //   • Navigate back (with a success toast) once saving completes.
+    //   • Show an error toast and reset isSaving if encoding fails.
+    //   • Reset isSaving when recording transitions away from Success (e.g. deleted).
+    LaunchedEffect(recordingState) {
+        when (val state = recordingState) {
+            is RecordingState.Success -> {
+                if (isSaving) {
+                    // Encoding finished successfully — navigate away.
+                    isSaving = false
+                    Toast.makeText(context, "Voice cloned and saved successfully!", Toast.LENGTH_SHORT).show()
+                    onBack()
+                }
+            }
+            is RecordingState.Error -> {
+                if (isSaving) {
+                    isSaving = false
+                    Toast.makeText(context, state.message, Toast.LENGTH_LONG).show()
+                }
+            }
+            else -> { /* no-op */ }
+        }
+    }
 
     // Store amplitudes over time for the visualizer
     val amplitudeHistory = remember { mutableStateListOf<Float>() }
@@ -302,17 +331,29 @@ fun VoiceSetupScreen(
 
                         Button(
                             onClick = {
+                                isSaving = true
                                 viewModel.saveClonedVoice(transcription)
-                                Toast.makeText(context, "Voice cloned and saved successfully!", Toast.LENGTH_SHORT).show()
-                                onBack()
+                                // FIX: Do NOT call onBack() immediately — saveClonedVoice is now
+                                // asynchronous (it runs the NeuCodec encoder on a background thread).
+                                // Navigation happens via the LaunchedEffect observing recordingState below.
                             },
-                            enabled = transcription.isNotBlank(),
+                            enabled = transcription.isNotBlank() && !isSaving,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(56.dp),
                             shape = RoundedCornerShape(16.dp)
                         ) {
-                            Text("Save and Apply Voice", fontWeight = FontWeight.Bold)
+                            if (isSaving) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(20.dp),
+                                    color = MaterialTheme.colorScheme.onPrimary,
+                                    strokeWidth = 2.dp
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Encoding Voice…", fontWeight = FontWeight.Bold)
+                            } else {
+                                Text("Save and Apply Voice", fontWeight = FontWeight.Bold)
+                            }
                         }
                     }
                 }

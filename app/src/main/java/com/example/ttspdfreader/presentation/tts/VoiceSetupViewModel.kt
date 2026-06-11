@@ -9,6 +9,7 @@ import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.ttspdfreader.data.local.SettingsManager
+import com.example.ttspdfreader.data.tts.NeuTTSEngine
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
@@ -37,7 +38,10 @@ sealed class RecordingState {
 @HiltViewModel
 class VoiceSetupViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val settingsManager: SettingsManager
+    private val settingsManager: SettingsManager,
+    // FIX: Inject NeuTTSEngine so we can call encodeReferenceAudio instead of
+    //      writing random dummy tokens.
+    private val ttsEngine: NeuTTSEngine
 ) : ViewModel() {
 
     companion object {
@@ -60,6 +64,10 @@ class VoiceSetupViewModel @Inject constructor(
     private var isRecording = false
     private var recordingJob: Job? = null
     private var timerJob: Job? = null
+
+    // FIX: Capture the final duration at stopRecording() time so saveClonedVoice()
+    //      can use the correct value even after the timer coroutine is cancelled.
+    private var finalRecordingDuration = 0f
 
     private val voiceDir = File(context.filesDir, "voice")
     private val tempPcmFile = File(voiceDir, "temp.pcm")
@@ -104,6 +112,7 @@ class VoiceSetupViewModel @Inject constructor(
                 isRecording = true
                 _recordingState.value = RecordingState.Recording
                 _recordingDuration.value = 0f
+                finalRecordingDuration = 0f
 
                 // Audio recording thread
                 recordingJob = launch(Dispatchers.IO) {
@@ -173,6 +182,9 @@ class VoiceSetupViewModel @Inject constructor(
         if (!isRecording) return
         isRecording = false
 
+        // FIX: Snapshot duration before cancelling the timer coroutine so it isn't lost.
+        finalRecordingDuration = _recordingDuration.value
+
         recordingJob?.cancel()
         timerJob?.cancel()
 
@@ -184,8 +196,7 @@ class VoiceSetupViewModel @Inject constructor(
             Log.e(TAG, "Error stopping audio recorder", e)
         }
 
-        val duration = _recordingDuration.value
-        if (duration < 3.0f) {
+        if (finalRecordingDuration < 3.0f) {
             _recordingState.value = RecordingState.Error("Audio clip is too short. Record for at least 3 seconds.")
             tempPcmFile.delete()
             return
@@ -197,7 +208,9 @@ class VoiceSetupViewModel @Inject constructor(
                 convertPcmToWav(tempPcmFile, referenceWavFile)
             }
             if (success) {
-                _recordingState.value = RecordingState.Success(referenceWavFile, duration)
+                // FIX: Use finalRecordingDuration (captured at stop time) not _recordingDuration.value
+                //      which may have been reset or changed by the time this resumes.
+                _recordingState.value = RecordingState.Success(referenceWavFile, finalRecordingDuration)
             } else {
                 _recordingState.value = RecordingState.Error("Failed to encode WAV audio")
             }
@@ -282,21 +295,62 @@ class VoiceSetupViewModel @Inject constructor(
         out.write(header, 0, 44)
     }
 
+    /**
+     * FIX: Previously this wrote 128 random integers as "voice tokens", which caused
+     * the TTS engine to inject meaningless garbage into the LLM prompt and produce
+     * audio that sounded nothing like the recorded voice.
+     *
+     * The correct flow is:
+     *   1. Read the PCM samples from the saved WAV file.
+     *   2. Pass them to NeuTTSEngine.encodeReferenceAudio(), which runs the NeuCodec
+     *      encoder (nativeEncodeAudio JNI) to get the real codec token sequence.
+     *   3. Persist those tokens to disk so ReadAloudService can reload them on next launch.
+     *
+     * The transcription string is kept as a parameter for future use (e.g. a text-guided
+     * encoder or verification step), but the actual token derivation is audio-based.
+     */
     fun saveClonedVoice(transcription: String) {
         if (transcription.isBlank()) return
+        if (!referenceWavFile.exists()) {
+            _recordingState.value = RecordingState.Error("Reference audio file not found. Please re-record.")
+            return
+        }
 
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                // Generate and save dummy voice reference tokens for the LLM pipeline
-                val dummyTokens = IntArray(128) { (1000..5000).random() }
-                val byteBuffer = ByteBuffer.allocate(dummyTokens.size * 4)
-                byteBuffer.asIntBuffer().put(dummyTokens)
+                // Encode the recorded WAV into real NeuCodec tokens via the native engine.
+                val tokens = ttsEngine.encodeReferenceAudio(referenceWavFile)
+                if (tokens == null || tokens.isEmpty()) {
+                    withContext(Dispatchers.Main) {
+                        _recordingState.value = RecordingState.Error(
+                            "Failed to encode reference voice. Make sure the TTS model is downloaded."
+                        )
+                    }
+                    return@launch
+                }
+
+                // Persist tokens to disk so ReadAloudService can load them across sessions.
+                val byteBuffer = ByteBuffer.allocate(tokens.size * 4)
+                byteBuffer.order(ByteOrder.LITTLE_ENDIAN)
+                byteBuffer.asIntBuffer().put(tokens)
                 tokensFile.writeBytes(byteBuffer.array())
 
                 settingsManager.setHasReferenceVoice(true)
-                _recordingState.value = RecordingState.Success(referenceWavFile, _recordingDuration.value)
+
+                // Also push tokens into the live engine instance so playback
+                // in the same session doesn't require a restart.
+                ttsEngine.setReferenceVoice(tokens)
+
+                withContext(Dispatchers.Main) {
+                    // FIX: Use finalRecordingDuration (captured at stop time) instead of the
+                    //      potentially-zeroed _recordingDuration.value.
+                    _recordingState.value = RecordingState.Success(referenceWavFile, finalRecordingDuration)
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to save reference voice tokens", e)
+                withContext(Dispatchers.Main) {
+                    _recordingState.value = RecordingState.Error("Failed to save voice: ${e.message}")
+                }
             }
         }
     }
@@ -305,7 +359,9 @@ class VoiceSetupViewModel @Inject constructor(
         if (referenceWavFile.exists()) referenceWavFile.delete()
         if (tokensFile.exists()) tokensFile.delete()
         settingsManager.setHasReferenceVoice(false)
+        ttsEngine.setReferenceVoice(null)
         _recordingState.value = RecordingState.Idle
         _recordingDuration.value = 0f
+        finalRecordingDuration = 0f
     }
 }

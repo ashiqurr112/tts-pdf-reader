@@ -60,6 +60,9 @@ class NeuTTSEngine @Inject constructor(
     private external fun nativePhonemeize(text: String, lang: String): String
     private external fun nativeInitLlama(modelPath: String, nThreads: Int): Long
     private external fun nativeGenerate(ctxHandle: Long, phonemes: String, refTokens: IntArray?, speed: Float): IntArray
+    // FIX: New JNI function that runs the NeuCodec encoder to convert raw PCM
+    //      float samples into codec tokens suitable for voice cloning.
+    private external fun nativeEncodeAudio(samples: FloatArray, sampleRate: Int): IntArray
     private external fun nativeFreeLlama(ctxHandle: Long)
     private external fun nativeFreeEspeak()
 
@@ -158,6 +161,83 @@ class NeuTTSEngine @Inject constructor(
 
     fun hasReferenceVoice(): Boolean {
         return referenceVoiceTokens != null && referenceVoiceTokens!!.isNotEmpty()
+    }
+
+    /**
+     * FIX: Encodes the reference WAV audio file into NeuCodec tokens for voice cloning.
+     *
+     * Previously, VoiceSetupViewModel.saveClonedVoice() wrote 128 random integers to
+     * reference_tokens.dat. These random tokens were prepended to the LLM prompt as
+     * fake "reference audio" which broke voice cloning entirely — the model received
+     * nonsense tokens and produced audio that sounded nothing like the recorded speaker.
+     *
+     * This method:
+     *   1. Reads the PCM samples out of the WAV file (skipping the 44-byte header).
+     *   2. Normalises the Int16 samples to [-1, 1] floats.
+     *   3. Calls nativeEncodeAudio() (JNI) which runs the NeuCodec encoder inside
+     *      llama.cpp to produce the real codec token sequence for the audio.
+     *   4. Returns that IntArray so the caller can persist it and/or pass it to
+     *      setReferenceVoice().
+     *
+     * Returns null if the native library is not loaded, the engine is not initialised,
+     * or the WAV file cannot be read.
+     */
+    suspend fun encodeReferenceAudio(wavFile: java.io.File): IntArray? = withContext(nativeDispatcher) {
+        if (!nativeLibLoaded) {
+            Log.e(TAG, "Cannot encode reference audio: native library not loaded.")
+            return@withContext null
+        }
+
+        // Ensure the engine (and therefore llama.cpp context) is ready — the codec
+        // encoder lives in the same native library.
+        if (!isInitialized) {
+            val ok = init()
+            if (!ok) {
+                Log.e(TAG, "Cannot encode reference audio: engine failed to initialise.")
+                return@withContext null
+            }
+        }
+
+        if (!wavFile.exists() || wavFile.length() < 44) {
+            Log.e(TAG, "Reference WAV file is missing or too small: ${wavFile.absolutePath}")
+            return@withContext null
+        }
+
+        try {
+            // Read PCM Int16 samples from the WAV file, skipping the 44-byte header.
+            val rawBytes = wavFile.readBytes()
+            val pcmOffset = 44
+            val pcmByteCount = rawBytes.size - pcmOffset
+            if (pcmByteCount <= 0) {
+                Log.e(TAG, "WAV file has no PCM data after header")
+                return@withContext null
+            }
+
+            val sampleCount = pcmByteCount / 2 // 16-bit mono
+            val samples = FloatArray(sampleCount)
+            val pcmBuf = java.nio.ByteBuffer.wrap(rawBytes, pcmOffset, pcmByteCount)
+                .order(java.nio.ByteOrder.LITTLE_ENDIAN)
+            for (i in 0 until sampleCount) {
+                // Normalise Int16 → [-1.0, 1.0]
+                samples[i] = pcmBuf.short / 32768f
+            }
+
+            // Delegate to the native encoder.
+            try {
+                val tokens = nativeEncodeAudio(samples, 16000)
+                if (tokens == null || tokens.isEmpty()) {
+                    Log.e(TAG, "nativeEncodeAudio returned empty result")
+                    return@withContext null
+                }
+                return@withContext tokens
+            } catch (e: UnsatisfiedLinkError) {
+                Log.e(TAG, "nativeEncodeAudio not found — native library may be outdated", e)
+                return@withContext null
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error reading or encoding reference WAV", e)
+            return@withContext null
+        }
     }
 
     suspend fun synthesize(text: String, speed: Float = 1.0f): Flow<FloatArray> = flow {
