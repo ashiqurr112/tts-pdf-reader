@@ -26,7 +26,23 @@ class PdfRendererWrapper(
 
     init {
         val uri = Uri.parse(uriString)
-        fileDescriptor = context.contentResolver.openFileDescriptor(uri, "r")
+        try {
+            if (uri.scheme == "file") {
+                val path = uri.path
+                if (path != null) {
+                    fileDescriptor = ParcelFileDescriptor.open(java.io.File(path), ParcelFileDescriptor.MODE_READ_ONLY)
+                }
+            } else {
+                fileDescriptor = context.contentResolver.openFileDescriptor(uri, "r")
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            // Fallback for unexpected cases
+            if (fileDescriptor == null) {
+                fileDescriptor = context.contentResolver.openFileDescriptor(uri, "r")
+            }
+        }
+        
         fileDescriptor?.let {
             renderer = PdfRenderer(it)
             pageCount = renderer?.pageCount ?: 0
