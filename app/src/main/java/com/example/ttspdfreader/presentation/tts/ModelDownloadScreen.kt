@@ -26,6 +26,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.ttspdfreader.data.tts.DownloadState
 import java.util.Locale
 
+enum class DownloadStage {
+    IDLE, DOWNLOADING, COMPLETE, ERROR
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ModelDownloadScreen(
@@ -35,6 +39,15 @@ fun ModelDownloadScreen(
 ) {
     val downloadState by viewModel.downloadState.collectAsStateWithLifecycle()
     var wifiOnly by remember { mutableStateOf(true) }
+
+    val downloadStage = remember(downloadState) {
+        when (downloadState) {
+            is DownloadState.Idle -> DownloadStage.IDLE
+            is DownloadState.Downloading -> DownloadStage.DOWNLOADING
+            is DownloadState.Complete -> DownloadStage.COMPLETE
+            is DownloadState.Error -> DownloadStage.ERROR
+        }
+    }
 
     val requiredSpace = viewModel.getRequiredSpaceBytes()
     val availableSpace = viewModel.getAvailableSpaceBytes()
@@ -169,11 +182,11 @@ fun ModelDownloadScreen(
 
                 // Progress Area or Options
                 AnimatedContent(
-                    targetState = downloadState,
+                    targetState = downloadStage,
                     label = "download_state_content"
-                ) { state ->
-                    when (state) {
-                        is DownloadState.Idle -> {
+                ) { stage ->
+                    when (stage) {
+                        DownloadStage.IDLE -> {
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
@@ -207,59 +220,62 @@ fun ModelDownloadScreen(
                                 }
                             }
                         }
-                        is DownloadState.Downloading -> {
-                            val progressPercent = (state.progress * 100).toInt()
-                            val downloadedMb = state.bytesDownloaded.toFloat() / (1024 * 1024)
-                            val totalMb = state.totalBytes.toFloat() / (1024 * 1024)
+                        DownloadStage.DOWNLOADING -> {
+                            val state = downloadState as? DownloadState.Downloading
+                            if (state != null) {
+                                val progressPercent = (state.progress * 100).toInt()
+                                val downloadedMb = state.bytesDownloaded.toFloat() / (1024 * 1024)
+                                val totalMb = state.totalBytes.toFloat() / (1024 * 1024)
 
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                LinearProgressIndicator(
-                                    progress = { state.progress },
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(10.dp)
-                                        .clip(RoundedCornerShape(5.dp)),
-                                    color = MaterialTheme.colorScheme.primary,
-                                    trackColor = MaterialTheme.colorScheme.primaryContainer
-                                )
-
-                                Spacer(modifier = Modifier.height(12.dp))
-
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Text(
-                                        text = String.format(Locale.US, "%.1f MB / %.1f MB", downloadedMb, totalMb),
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    LinearProgressIndicator(
+                                        progress = { state.progress },
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(10.dp)
+                                            .clip(RoundedCornerShape(5.dp)),
+                                        color = MaterialTheme.colorScheme.primary,
+                                        trackColor = MaterialTheme.colorScheme.primaryContainer
                                     )
-                                    Text(
-                                        text = "$progressPercent%",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                }
 
-                                Spacer(modifier = Modifier.height(24.dp))
+                                    Spacer(modifier = Modifier.height(12.dp))
 
-                                OutlinedButton(
-                                    onClick = { viewModel.cancelDownload() },
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(56.dp),
-                                    shape = RoundedCornerShape(16.dp)
-                                ) {
-                                    Text(
-                                        text = "Cancel",
-                                        fontWeight = FontWeight.Bold,
-                                        style = MaterialTheme.typography.titleMedium
-                                    )
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Text(
+                                            text = String.format(Locale.US, "%.1f MB / %.1f MB", downloadedMb, totalMb),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Text(
+                                            text = "$progressPercent%",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+
+                                    Spacer(modifier = Modifier.height(24.dp))
+
+                                    OutlinedButton(
+                                        onClick = { viewModel.cancelDownload() },
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(56.dp),
+                                        shape = RoundedCornerShape(16.dp)
+                                    ) {
+                                        Text(
+                                            text = "Cancel",
+                                            fontWeight = FontWeight.Bold,
+                                            style = MaterialTheme.typography.titleMedium
+                                        )
+                                    }
                                 }
                             }
                         }
-                        is DownloadState.Complete -> {
+                        DownloadStage.COMPLETE -> {
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 Text(
                                     text = "All modules downloaded and verified successfully!",
@@ -288,10 +304,11 @@ fun ModelDownloadScreen(
                                 }
                             }
                         }
-                        is DownloadState.Error -> {
+                        DownloadStage.ERROR -> {
+                            val state = downloadState as? DownloadState.Error
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 Text(
-                                    text = state.message,
+                                    text = state?.message ?: "Unknown error",
                                     color = MaterialTheme.colorScheme.error,
                                     style = MaterialTheme.typography.bodyLarge,
                                     fontWeight = FontWeight.Bold,
