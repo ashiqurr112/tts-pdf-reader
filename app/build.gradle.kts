@@ -100,5 +100,6 @@ dependencies {
 
   // PDF Viewer
   implementation("androidx.pdf:pdf-viewer:1.0.0-alpha18")
+  implementation("androidx.pdf:pdf-viewer-fragment:1.0.0-alpha18")
   implementation("androidx.pdf:pdf-compose:1.0.0-alpha18")
 }
