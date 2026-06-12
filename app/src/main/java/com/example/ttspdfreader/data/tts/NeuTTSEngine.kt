@@ -191,7 +191,7 @@ class NeuTTSEngine @Inject constructor(
         val env = ortEnv ?: throw IllegalStateException("ONNX environment is null")
         val session = ortSession ?: throw IllegalStateException("ONNX session is null")
 
-        val phonemes = withContext(nativeDispatcher) {
+        val rawPhonemes = withContext(nativeDispatcher) {
             try {
                 nativePhonemeize(text, "en-us")
             } catch (e: UnsatisfiedLinkError) {
@@ -200,9 +200,12 @@ class NeuTTSEngine @Inject constructor(
             }
         }
 
-        if (phonemes.isBlank()) {
+        if (rawPhonemes.isBlank()) {
             return@flow
         }
+
+        // Translate raw espeak-ng IPA to Misaki/Kokoro phoneme format
+        val phonemes = translatePhonemes(rawPhonemes, british = false)
 
         // Tokenize IPA phonemes with KokoroTokenizer (limit to 510 tokens per chunk)
         val chunks = kokoroTokenizer.tokenizeWithLimit(phonemes)
@@ -275,5 +278,73 @@ class NeuTTSEngine @Inject constructor(
             ortEnv = null
         }
         isInitialized = false
+    }
+
+    /**
+     * Translates raw espeak-ng IPA output into the custom phonemes expected by Kokoro (Misaki G2P).
+     * Maps diphthongs to uppercase letters (e.g. eɪ -> A) and normalizes consonants/vowels.
+     */
+    private fun translatePhonemes(ps: String, british: Boolean = false): String {
+        var result = ps
+
+        // 1. Remove nasalization tilde (U+0303)
+        result = result.replace("\u0303", "")
+
+        // 2. Normalize/remove tie characters (U+0361, U+035C, and caret ^) to simplify matching
+        result = result.replace("\u0361", "")
+        result = result.replace("\u035C", "")
+        result = result.replace("^", "")
+
+        // 3. Handle syllabic consonants (e.g., n followed by U+0329 combining vertical line below becomes ᵊn)
+        result = result.replace(Regex("([^\\s])\\u0329"), "\u1d4a$1") // \u1d4a is superscript schwa ᵊ
+        result = result.replace("\u0329", "")
+
+        // 4. Mappings from espeak to Misaki (ordered by length descending)
+        val replacements = listOf(
+            "aɪ" to "I",
+            "aʊ" to "W",
+            "dʒ" to "ʤ",
+            "tʃ" to "ʧ",
+            "eɪ" to "A",
+            "ɔɪ" to "Y",
+            "əl" to "\u1d4al",   // ᵊl
+            "ʔn" to "t\u1d4an",  // tᵊn
+            "ʲO" to "jO",
+            "ʲQ" to "jQ"
+        )
+        for ((old, new) in replacements) {
+            result = result.replace(old, new)
+        }
+
+        // 5. Single-character replacements (ordered by length descending)
+        val singleReplacements = listOf(
+            "e" to "A",
+            "r" to "ɹ",
+            "x" to "k",
+            "ç" to "k",
+            "ɐ" to "ə",
+            "ɚ" to "əɹ",
+            "ɬ" to "l",
+            "ʔ" to "t",
+            "ʲ" to ""
+        )
+        for ((old, new) in singleReplacements) {
+            result = result.replace(old, new)
+        }
+
+        // 6. Language/Dialect specific adjustments
+        if (british) {
+            result = result.replace("eə", "ɛː")
+            result = result.replace("iə", "ɪə")
+            result = result.replace("əʊ", "Q")
+        } else {
+            result = result.replace("oʊ", "O")
+            result = result.replace("ɜːɹ", "ɜɹ")
+            result = result.replace("ɜː", "ɜɹ")
+            result = result.replace("ɪə", "iə")
+            result = result.replace("ː", "") // Strip vowel length marker in US English
+        }
+
+        return result
     }
 }
