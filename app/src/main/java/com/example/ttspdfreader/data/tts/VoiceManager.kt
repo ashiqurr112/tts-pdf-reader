@@ -45,7 +45,7 @@ class VoiceManager @Inject constructor(
         }
 
         // Clamp tokenCount to 0..509 (clamped length - 1)
-        val clampedCount = (tokenCount - 1).coerceIn(0, MAX_TOKENS - 1)
+        val clampedCount = tokenCount.coerceIn(0, MAX_TOKENS - 1)
         val offset = clampedCount * TOKEN_LENGTH
         val embedding = FloatArray(TOKEN_LENGTH)
         System.arraycopy(cached, offset, embedding, 0, TOKEN_LENGTH)

@@ -50,7 +50,7 @@ class AudioRenderer @Inject constructor() {
             val minBufferSize = AudioTrack.getMinBufferSize(
                 SAMPLE_RATE,
                 AudioFormat.CHANNEL_OUT_MONO,
-                AudioFormat.ENCODING_PCM_FLOAT
+                AudioFormat.ENCODING_PCM_16BIT
             )
 
             // Double buffering
@@ -66,7 +66,7 @@ class AudioRenderer @Inject constructor() {
                     )
                     .setAudioFormat(
                         AudioFormat.Builder()
-                            .setEncoding(AudioFormat.ENCODING_PCM_FLOAT)
+                            .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
                             .setSampleRate(SAMPLE_RATE)
                             .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
                             .build()
@@ -118,7 +118,11 @@ class AudioRenderer @Inject constructor() {
                         }
                         isStarted = true
                     }
-                    val written = write(chunk)
+                    val shortChunk = ShortArray(chunk.size)
+                    for (i in chunk.indices) {
+                        shortChunk[i] = (chunk[i].coerceIn(-1.0f, 1.0f) * 32767.0f).toInt().toShort()
+                    }
+                    val written = write(shortChunk)
                     sentenceFrames += written
                 }
                 waitForPlaybackComplete(initialHeadPos + sentenceFrames.toLong())
@@ -138,7 +142,7 @@ class AudioRenderer @Inject constructor() {
         return rendererJob!!
     }
 
-    private fun write(chunk: FloatArray): Int {
+    private fun write(chunk: ShortArray): Int {
         var offset = 0
         while (offset < chunk.size && isPlaying) {
             val track = audioTrack ?: break
