@@ -82,7 +82,8 @@ class NeuTTSEngine @Inject constructor(
                 }
 
                 if (!espeakInitialized) {
-                    espeakInitialized = nativeInitEspeak(espeakDataDir.absolutePath)
+                    // espeak_Initialize expects the PARENT dir that contains espeak-ng-data/
+                    espeakInitialized = nativeInitEspeak(context.filesDir.absolutePath)
                     if (!espeakInitialized) {
                         Log.e(TAG, "Failed to initialize native espeak-ng")
                         return@withLock false
@@ -208,7 +209,7 @@ class NeuTTSEngine @Inject constructor(
 
         for (chunk in chunks) {
             // style vector: shape [1, 256]
-            val tokenCount = chunk.size
+            val tokenCount = chunk.size - 2  // exclude the 2 pad tokens
             val styleData = voiceManager.getEmbedding(currentVoiceId, tokenCount)
             
             val inputIdsTensor = OnnxTensor.createTensor(env, LongBuffer.wrap(chunk), longArrayOf(1, chunk.size.toLong()))

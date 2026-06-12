@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.ServiceConnection
 import android.net.Uri
 import android.os.IBinder
+import android.util.Log
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -191,10 +192,16 @@ class ReaderViewModel @Inject constructor(
         bindTtsService()
 
         viewModelScope.launch {
-            while (readAloudService == null) {
+            var waited = 0L
+            while (readAloudService == null && waited < 5000L) {
                 delay(50)
+                waited += 50
             }
-            readAloudService?.startReading(uri.toString(), title, currentPage, 0)
+            if (readAloudService != null) {
+                readAloudService?.startReading(uri.toString(), title, currentPage, 0)
+            } else {
+                Log.e("ReaderViewModel", "Failed to bind to ReadAloudService within timeout")
+            }
         }
     }
 

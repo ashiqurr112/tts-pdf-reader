@@ -357,27 +357,35 @@ class ReadAloudService : Service(), AudioManager.OnAudioFocusChangeListener {
     }
 
     fun skipToNextSentence() {
-        val nextIndex = _currentSentenceIndex.value + 1
-        if (nextIndex in _sentences.value.indices) {
-            readSentence(nextIndex)
-        } else {
-            val nextPage = _currentPage.value + 1
-            if (nextPage < totalPagesCount) {
-                loadPageText(nextPage, 0)
+        serviceScope.launch {
+            audioRenderer.stop()
+            playbackJob?.cancel()
+            val nextIndex = _currentSentenceIndex.value + 1
+            if (nextIndex in _sentences.value.indices) {
+                readSentence(nextIndex)
+            } else {
+                val nextPage = _currentPage.value + 1
+                if (nextPage < totalPagesCount) {
+                    loadPageText(nextPage, 0)
+                }
             }
         }
     }
 
     fun skipToPreviousSentence() {
-        val prevIndex = _currentSentenceIndex.value - 1
-        if (prevIndex >= 0) {
-            readSentence(prevIndex)
-        } else {
-            val prevPage = _currentPage.value - 1
-            if (prevPage >= 0) {
-                // To skip to previous page's last sentence, we load that page and extract
-                // But for simplicity, we load previous page at index 0, or we can handle it dynamically
-                loadPageText(prevPage, 0)
+        serviceScope.launch {
+            audioRenderer.stop()
+            playbackJob?.cancel()
+            val prevIndex = _currentSentenceIndex.value - 1
+            if (prevIndex >= 0) {
+                readSentence(prevIndex)
+            } else {
+                val prevPage = _currentPage.value - 1
+                if (prevPage >= 0) {
+                    // To skip to previous page's last sentence, we load that page and extract
+                    // But for simplicity, we load previous page at index 0, or we can handle it dynamically
+                    loadPageText(prevPage, 0)
+                }
             }
         }
     }

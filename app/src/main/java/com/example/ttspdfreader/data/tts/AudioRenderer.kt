@@ -41,6 +41,7 @@ class AudioRenderer @Inject constructor() {
     // advancing to the next sentence even after a pause or skip.
     private var rendererJob: Job? = null
     private val rendererScope = CoroutineScope(Dispatchers.Default)
+    private var playGeneration = 0
 
     suspend fun init() {
         mutex.withLock {
@@ -88,16 +89,14 @@ class AudioRenderer @Inject constructor() {
         // so stale audio from a previous sentence can't fire onComplete() late.
         rendererJob?.cancel()
 
-        // FIX: set isPlaying inside the same logical section as the job launch so
-        // there is no window where the flag is true but the track hasn't started yet,
-        // and no window where a concurrent pause() races with this assignment.
+        val thisGeneration = ++playGeneration
         isPlaying = true
 
         // FIX: use the shared rendererScope (not a fresh detached scope) so the
         // job is reachable and cancellable via rendererJob.
         rendererJob = rendererScope.launch {
             try {
-                val initialHeadPos = audioTrack?.playbackHeadPosition ?: 0
+                val initialHeadPos = (audioTrack?.playbackHeadPosition?.toLong() ?: 0L) and 0xFFFFFFFFL
                 var sentenceFrames = 0
                 var isStarted = false
                 audioChunks.collect { chunk ->
@@ -122,7 +121,7 @@ class AudioRenderer @Inject constructor() {
                     val written = write(chunk)
                     sentenceFrames += written
                 }
-                waitForPlaybackComplete(initialHeadPos + sentenceFrames)
+                waitForPlaybackComplete(initialHeadPos + sentenceFrames.toLong())
                 audioTrack?.pause()
             } catch (e: Exception) {
                 Log.e(TAG, "Error during audio playback collection", e)
@@ -131,7 +130,7 @@ class AudioRenderer @Inject constructor() {
                 // i.e. the job finished naturally rather than being cancelled by
                 // pause()/stop()/skip(). This prevents the "advance to next sentence
                 // after pause" bug where the detached job always fired onComplete.
-                if (isPlaying) {
+                if (isPlaying && thisGeneration == playGeneration) {
                     onComplete()
                 }
             }
@@ -153,11 +152,11 @@ class AudioRenderer @Inject constructor() {
         return offset
     }
 
-    private suspend fun waitForPlaybackComplete(targetFrameCount: Int) {
+    private suspend fun waitForPlaybackComplete(targetFrameCount: Long) {
         val track = audioTrack ?: return
         try {
             while (isPlaying) {
-                val currentHead = track.playbackHeadPosition
+                val currentHead = track.playbackHeadPosition.toLong() and 0xFFFFFFFFL
                 if (currentHead >= targetFrameCount) {
                     break
                 }
