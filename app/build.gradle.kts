@@ -10,7 +10,7 @@ android {
     namespace = "com.example.ttspdfreader"
     compileSdk = 36
     compileSdkExtension = 19
-    ndkVersion = "26.1.10909125"
+    ndkVersion = "28.2.13676358"
     defaultConfig {
         applicationId = "com.example.ttspdfreader"
         minSdk = 28
