@@ -32,6 +32,9 @@ class SettingsManager @Inject constructor(
     private val _hasReferenceVoice = MutableStateFlow(prefs.getBoolean("key_has_reference_voice", false))
     val hasReferenceVoice: StateFlow<Boolean> = _hasReferenceVoice
 
+    private val _selectedVoiceId = MutableStateFlow(prefs.getString("key_selected_voice", "af_heart") ?: "af_heart")
+    val selectedVoiceId: StateFlow<String> = _selectedVoiceId
+
     fun setDarkTheme(enabled: Boolean) {
         prefs.edit().putBoolean("key_dark_theme", enabled).apply()
         _isDarkTheme.value = enabled
@@ -62,6 +65,11 @@ class SettingsManager @Inject constructor(
     fun setHasReferenceVoice(hasVoice: Boolean) {
         prefs.edit().putBoolean("key_has_reference_voice", hasVoice).apply()
         _hasReferenceVoice.value = hasVoice
+    }
+
+    fun setSelectedVoice(id: String) {
+        prefs.edit().putString("key_selected_voice", id).apply()
+        _selectedVoiceId.value = id
     }
 
     fun hasReferenceVoice(): Boolean = prefs.getBoolean("key_has_reference_voice", false)

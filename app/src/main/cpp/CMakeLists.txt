@@ -5,17 +5,7 @@ project(neutts_jni LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# 1. Configure and include llama.cpp (disable all non-essential build targets)
-set(LLAMA_BUILD_COMMON OFF CACHE BOOL "llama: build common library" FORCE)
-set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "llama: build examples" FORCE)
-set(LLAMA_BUILD_TESTS OFF CACHE BOOL "llama: build tests" FORCE)
-set(LLAMA_BUILD_SERVER OFF CACHE BOOL "llama: build server" FORCE)
-set(LLAMA_BUILD_TOOLS OFF CACHE BOOL "llama: build tools" FORCE)
-set(LLAMA_BUILD_APP OFF CACHE BOOL "llama: build app" FORCE)
-
-add_subdirectory(llama.cpp)
-
-# 2. Configure and include espeak-ng manually
+# 1. Configure and include espeak-ng manually
 set(ESPEAK_SRC_DIR espeak-ng/src)
 set(ESPEAK_NG_DIR ${ESPEAK_SRC_DIR}/libespeak-ng)
 set(UCD_DIR ${ESPEAK_SRC_DIR}/ucd-tools)
@@ -74,7 +64,7 @@ target_compile_options(espeak-ng PRIVATE
     -fwrapv
 )
 
-# 3. Build JNI Bridge
+# 2. Build JNI Bridge
 find_library(log-lib log)
 
 add_library(neutts_jni SHARED
@@ -82,14 +72,11 @@ add_library(neutts_jni SHARED
 )
 
 target_include_directories(neutts_jni PRIVATE
-    llama.cpp/include
-    llama.cpp/ggml/include
     espeak-config
     ${ESPEAK_SRC_DIR}/include
 )
 
 target_link_libraries(neutts_jni PRIVATE
-    llama
     espeak-ng
     ${log-lib}
 )

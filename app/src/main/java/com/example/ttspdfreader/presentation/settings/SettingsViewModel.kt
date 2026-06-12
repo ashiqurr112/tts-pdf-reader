@@ -17,6 +17,7 @@ class SettingsViewModel @Inject constructor(
     val autoReadOnOpen: StateFlow<Boolean> = settingsManager.autoReadOnOpen
     val hasDownloadedModels: StateFlow<Boolean> = settingsManager.hasDownloadedModels
     val hasReferenceVoice: StateFlow<Boolean> = settingsManager.hasReferenceVoice
+    val selectedVoiceId: StateFlow<String> = settingsManager.selectedVoiceId
 
     fun setDarkTheme(enabled: Boolean) {
         settingsManager.setDarkTheme(enabled)

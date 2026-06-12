@@ -126,7 +126,7 @@ fun ModelDownloadScreen(
                 Spacer(modifier = Modifier.height(24.dp))
 
                 Text(
-                    text = "NeuTTS Air & NeuCodec Models",
+                    text = "Kokoro TTS Voice Model",
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface,
@@ -136,7 +136,7 @@ fun ModelDownloadScreen(
                 Spacer(modifier = Modifier.height(8.dp))
 
                 Text(
-                    text = "To run natural, offline voice reading, the app needs to download ~1.1 GB of neural speech modules.",
+                    text = "To run natural, offline voice reading, the app needs to download ~340 MB of Kokoro voice synthesis model.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center

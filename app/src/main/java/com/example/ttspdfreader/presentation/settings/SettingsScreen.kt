@@ -35,6 +35,16 @@ fun SettingsScreen(
     val autoReadOnOpen by viewModel.autoReadOnOpen.collectAsStateWithLifecycle()
     val hasDownloadedModels by viewModel.hasDownloadedModels.collectAsStateWithLifecycle()
     val hasReferenceVoice by viewModel.hasReferenceVoice.collectAsStateWithLifecycle()
+    val selectedVoiceId by viewModel.selectedVoiceId.collectAsStateWithLifecycle()
+    val voiceDisplayName = when (selectedVoiceId) {
+        "af_heart" -> "Heart (US Female)"
+        "af_bella" -> "Bella (US Female)"
+        "am_michael" -> "Michael (US Male)"
+        "am_fenrir" -> "Fenrir (US Male)"
+        "bf_emma" -> "Emma (UK Female)"
+        "bm_george" -> "George (UK Male)"
+        else -> selectedVoiceId
+    }
 
     val scrollState = rememberScrollState()
 
@@ -187,7 +197,7 @@ fun SettingsScreen(
             }
 
             Text(
-                text = "Text-To-Speech & Voice Cloning",
+                text = "Text-To-Speech",
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.primary,
                 fontWeight = FontWeight.Bold,
@@ -230,7 +240,7 @@ fun SettingsScreen(
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                text = if (hasDownloadedModels) "Offline models verified (1.1 GB)" else "Download offline speech modules",
+                                text = if (hasDownloadedModels) "Kokoro model verified (340 MB)" else "Download Kokoro speech model",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -276,20 +286,20 @@ fun SettingsScreen(
                         Spacer(modifier = Modifier.width(16.dp))
                         Column {
                             Text(
-                                "Custom Cloned Voice",
+                                "Voice Selection",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                text = if (hasReferenceVoice) "Cloned voice is active" else "Record custom reference voice",
+                                text = voiceDisplayName,
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
                     Text(
-                        text = if (hasReferenceVoice) "Active" else "Setup",
-                        color = if (hasReferenceVoice) Color(0xFF4CAF50) else MaterialTheme.colorScheme.secondary,
+                        text = voiceDisplayName,
+                        color = Color(0xFF4CAF50),
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.Bold
                     )

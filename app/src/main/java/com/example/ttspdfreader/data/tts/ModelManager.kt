@@ -34,22 +34,24 @@ class ModelManager @Inject constructor(
     private var isCancelled = false
 
     private val modelsDir = File(context.getExternalFilesDir(null), "models")
+    val voicesDir = File(modelsDir, "voices")
 
-    val ggufFile = File(modelsDir, "neutts-air-Q8_0.gguf")
-    val onnxFile = File(modelsDir, "neucodec-decoder-int8.onnx")
+    val onnxFile = File(modelsDir, "model.onnx")
 
-    // Download URLs (can be updated or configured)
-    private val ggufUrl = "https://huggingface.co/neuphonic/neutts-air-q8-gguf/resolve/main/neutts-air-Q8_0.gguf"
-    private val onnxUrl = "https://huggingface.co/neuphonic/neucodec-onnx-decoder-int8/resolve/main/model.onnx"
+    // Download URLs
+    private val onnxUrl = "https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/onnx/model.onnx"
+    private val voiceIds = listOf("af_heart", "af_bella", "am_michael", "am_fenrir", "bf_emma", "bm_george")
 
     fun modelsExist(): Boolean {
-        return ggufFile.exists() && ggufFile.length() > 0 &&
-               onnxFile.exists() && onnxFile.length() > 0
+        // Kokoro requires the ONNX model and at least the default voice (af_heart.bin)
+        val defaultVoiceFile = File(voicesDir, "af_heart.bin")
+        return onnxFile.exists() && onnxFile.length() > 0 &&
+               defaultVoiceFile.exists() && defaultVoiceFile.length() > 0
     }
 
     fun getRequiredStorageSpaceBytes(): Long {
-        // GGUF is approx 803MB, ONNX is approx 312MB. Let's allocate 1.2 GB to be safe.
-        return (803 + 312) * 1024L * 1024L
+        // ONNX is approx 330MB, 6 voices are approx 3MB total. Allocate 350MB.
+        return 350L * 1024L * 1024L
     }
 
     fun getAvailableStorageSpaceBytes(): Long {
@@ -71,20 +73,23 @@ class ModelManager @Inject constructor(
         }
 
         if (getAvailableStorageSpaceBytes() < getRequiredStorageSpaceBytes()) {
-            _downloadState.value = DownloadState.Error("Insufficient storage space. At least 1.2 GB required.")
+            _downloadState.value = DownloadState.Error("Insufficient storage space. At least 350 MB required.")
             return@withContext false
         }
 
         if (!modelsDir.exists()) {
             modelsDir.mkdirs()
         }
+        if (!voicesDir.exists()) {
+            voicesDir.mkdirs()
+        }
 
         try {
-            // Download GGUF Model (takes 0% to 70% of total progress)
-            if (!ggufFile.exists() || ggufFile.length() == 0L) {
-                downloadFile(ggufUrl, ggufFile, 0.0f, 0.7f)
+            // Download ONNX model (0% to 90% of progress)
+            if (!onnxFile.exists() || onnxFile.length() == 0L) {
+                downloadFile(onnxUrl, onnxFile, 0.0f, 0.9f)
             } else {
-                _downloadState.value = DownloadState.Downloading(0.7f, ggufFile.length(), ggufFile.length())
+                _downloadState.value = DownloadState.Downloading(0.9f, onnxFile.length(), onnxFile.length())
             }
 
             if (isCancelled) {
@@ -92,9 +97,15 @@ class ModelManager @Inject constructor(
                 return@withContext false
             }
 
-            // Download ONNX Decoder Model (takes 70% to 100% of total progress)
-            if (!onnxFile.exists() || onnxFile.length() == 0L) {
-                downloadFile(onnxUrl, onnxFile, 0.7f, 0.3f)
+            // Download 6 voice .bin files (90% to 100% of progress, shared equally: ~1.67% each)
+            val voiceWeight = 0.1f / voiceIds.size
+            for ((index, voiceId) in voiceIds.withIndex()) {
+                if (isCancelled) break
+                val voiceFile = File(voicesDir, "$voiceId.bin")
+                if (!voiceFile.exists() || voiceFile.length() == 0L) {
+                    val voiceUrl = "https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main/voices/$voiceId.bin"
+                    downloadFile(voiceUrl, voiceFile, 0.9f + (index * voiceWeight), voiceWeight)
+                }
             }
 
             if (isCancelled) {
@@ -219,8 +230,18 @@ class ModelManager @Inject constructor(
     }
 
     fun deleteModels() {
-        if (ggufFile.exists()) ggufFile.delete()
+        // Clean up new Kokoro files
         if (onnxFile.exists()) onnxFile.delete()
+        if (voicesDir.exists()) {
+            voicesDir.listFiles()?.forEach { it.delete() }
+            voicesDir.delete()
+        }
+        // Clean up old NeuTTS files if they exist
+        val oldGgufFile = File(modelsDir, "neutts-air-Q8_0.gguf")
+        if (oldGgufFile.exists()) oldGgufFile.delete()
+        val oldOnnxFile = File(modelsDir, "neucodec-decoder-int8.onnx")
+        if (oldOnnxFile.exists()) oldOnnxFile.delete()
+
         _downloadState.value = DownloadState.Idle
     }
 }

@@ -2,11 +2,11 @@ package com.example.ttspdfreader.data.tts
 
 import android.content.Context
 import android.util.Log
-import ai.onnxruntime.OnnxJavaType
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
 import ai.onnxruntime.TensorInfo
+import com.example.ttspdfreader.data.local.SettingsManager
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -16,7 +16,6 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.nio.IntBuffer
 import java.nio.LongBuffer
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -24,7 +23,10 @@ import javax.inject.Singleton
 @Singleton
 class NeuTTSEngine @Inject constructor(
     private val context: Context,
-    private val modelManager: ModelManager
+    private val modelManager: ModelManager,
+    private val kokoroTokenizer: KokoroTokenizer,
+    private val voiceManager: VoiceManager,
+    private val settingsManager: SettingsManager
 ) {
     companion object {
         private const val TAG = "NeuTTSEngine"
@@ -44,13 +46,11 @@ class NeuTTSEngine @Inject constructor(
     private val engineMutex = Mutex()
     private var isInitialized = false
     private var espeakInitialized = false
-    private var llamaCtxHandle: Long = 0L
 
     private var ortEnv: OrtEnvironment? = null
     private var ortSession: OrtSession? = null
 
-    // Reference audio tokens for voice cloning
-    private var referenceVoiceTokens: IntArray? = null
+    private var currentVoiceId: String = "af_heart"
 
     // Dedicated dispatcher for thread-safe native execution
     private val nativeDispatcher: CoroutineDispatcher = Dispatchers.Default
@@ -58,12 +58,6 @@ class NeuTTSEngine @Inject constructor(
     // Native JNI functions
     private external fun nativeInitEspeak(dataPath: String): Boolean
     private external fun nativePhonemeize(text: String, lang: String): String
-    private external fun nativeInitLlama(modelPath: String, nThreads: Int): Long
-    private external fun nativeGenerate(ctxHandle: Long, phonemes: String, refTokens: IntArray?, speed: Float): IntArray
-    // FIX: New JNI function that runs the NeuCodec encoder to convert raw PCM
-    //      float samples into codec tokens suitable for voice cloning.
-    private external fun nativeEncodeAudio(samples: FloatArray, sampleRate: Int): IntArray
-    private external fun nativeFreeLlama(ctxHandle: Long)
     private external fun nativeFreeEspeak()
 
     suspend fun init(): Boolean = withContext(nativeDispatcher) {
@@ -95,23 +89,20 @@ class NeuTTSEngine @Inject constructor(
                     }
                 }
 
-                // 2. Initialize llama.cpp
-                if (llamaCtxHandle == 0L) {
-                    val nThreads = Runtime.getRuntime().availableProcessors().coerceAtLeast(1).coerceAtMost(4)
-                    llamaCtxHandle = nativeInitLlama(modelManager.ggufFile.absolutePath, nThreads)
-                    if (llamaCtxHandle == 0L) {
-                        Log.e(TAG, "Failed to initialize native llama context")
-                        return@withLock false
-                    }
-                }
-
-                // 3. Initialize ONNX Runtime for NeuCodec
+                // 2. Initialize ONNX Runtime for Kokoro
                 if (ortSession == null) {
                     ortEnv = OrtEnvironment.getEnvironment()
                     val opts = OrtSession.SessionOptions()
                     opts.setIntraOpNumThreads(2)
+                    
+                    // CPU execution is standard and highly optimized for onnxruntime-android
+                    Log.i(TAG, "ONNX Runtime CPU provider initialized.")
+
                     ortSession = ortEnv?.createSession(modelManager.onnxFile.absolutePath, opts)
                 }
+
+                // 3. Load initial voice embedding
+                loadVoiceEmbedding(settingsManager.selectedVoiceId.value)
 
                 isInitialized = true
                 Log.i(TAG, "NeuTTSEngine initialized successfully.")
@@ -155,91 +146,35 @@ class NeuTTSEngine @Inject constructor(
         copyAssetDir("espeak-ng-data")
     }
 
-    fun setReferenceVoice(tokens: IntArray?) {
-        referenceVoiceTokens = tokens
-    }
-
-    fun hasReferenceVoice(): Boolean {
-        return referenceVoiceTokens != null && referenceVoiceTokens!!.isNotEmpty()
+    /**
+     * Loads/caches voice embedding. Called during initialization and on voice hot-swap.
+     */
+    fun loadVoiceEmbedding(voiceId: String) {
+        currentVoiceId = voiceId
+        try {
+            // Trigger loading to cache
+            voiceManager.getEmbedding(voiceId, 0)
+            Log.i(TAG, "Successfully loaded voice embedding: $voiceId")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to load voice embedding for $voiceId", e)
+        }
     }
 
     /**
-     * FIX: Encodes the reference WAV audio file into NeuCodec tokens for voice cloning.
-     *
-     * Previously, VoiceSetupViewModel.saveClonedVoice() wrote 128 random integers to
-     * reference_tokens.dat. These random tokens were prepended to the LLM prompt as
-     * fake "reference audio" which broke voice cloning entirely — the model received
-     * nonsense tokens and produced audio that sounded nothing like the recorded speaker.
-     *
-     * This method:
-     *   1. Reads the PCM samples out of the WAV file (skipping the 44-byte header).
-     *   2. Normalises the Int16 samples to [-1, 1] floats.
-     *   3. Calls nativeEncodeAudio() (JNI) which runs the NeuCodec encoder inside
-     *      llama.cpp to produce the real codec token sequence for the audio.
-     *   4. Returns that IntArray so the caller can persist it and/or pass it to
-     *      setReferenceVoice().
-     *
-     * Returns null if the native library is not loaded, the engine is not initialised,
-     * or the WAV file cannot be read.
+     * Compilation compatibility stubs. Kokoro always has a voice.
      */
-    suspend fun encodeReferenceAudio(wavFile: java.io.File): IntArray? = withContext(nativeDispatcher) {
-        if (!nativeLibLoaded) {
-            Log.e(TAG, "Cannot encode reference audio: native library not loaded.")
-            return@withContext null
-        }
-
-        // Ensure the engine (and therefore llama.cpp context) is ready — the codec
-        // encoder lives in the same native library.
-        if (!isInitialized) {
-            val ok = init()
-            if (!ok) {
-                Log.e(TAG, "Cannot encode reference audio: engine failed to initialise.")
-                return@withContext null
-            }
-        }
-
-        if (!wavFile.exists() || wavFile.length() < 44) {
-            Log.e(TAG, "Reference WAV file is missing or too small: ${wavFile.absolutePath}")
-            return@withContext null
-        }
-
-        try {
-            // Read PCM Int16 samples from the WAV file, skipping the 44-byte header.
-            val rawBytes = wavFile.readBytes()
-            val pcmOffset = 44
-            val pcmByteCount = rawBytes.size - pcmOffset
-            if (pcmByteCount <= 0) {
-                Log.e(TAG, "WAV file has no PCM data after header")
-                return@withContext null
-            }
-
-            val sampleCount = pcmByteCount / 2 // 16-bit mono
-            val samples = FloatArray(sampleCount)
-            val pcmBuf = java.nio.ByteBuffer.wrap(rawBytes, pcmOffset, pcmByteCount)
-                .order(java.nio.ByteOrder.LITTLE_ENDIAN)
-            for (i in 0 until sampleCount) {
-                // Normalise Int16 → [-1.0, 1.0]
-                samples[i] = pcmBuf.short / 32768f
-            }
-
-            // Delegate to the native encoder.
-            try {
-                val tokens = nativeEncodeAudio(samples, 16000)
-                if (tokens == null || tokens.isEmpty()) {
-                    Log.e(TAG, "nativeEncodeAudio returned empty result")
-                    return@withContext null
-                }
-                return@withContext tokens
-            } catch (e: UnsatisfiedLinkError) {
-                Log.e(TAG, "nativeEncodeAudio not found — native library may be outdated", e)
-                return@withContext null
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error reading or encoding reference WAV", e)
-            return@withContext null
-        }
+    fun setReferenceVoice(tokens: IntArray?) {
+        // No-op for compatibility
     }
 
+    fun hasReferenceVoice(): Boolean {
+        return true
+    }
+
+    /**
+     * Synthesizes text using espeak-ng for phonemization and Kokoro ONNX model for inference.
+     * Splitting is done if phoneme token count exceeds 510 limit.
+     */
     suspend fun synthesize(text: String, speed: Float = 1.0f): Flow<FloatArray> = flow {
         if (!isInitialized) {
             val success = init()
@@ -251,6 +186,9 @@ class NeuTTSEngine @Inject constructor(
         if (!nativeLibLoaded) {
             throw IllegalStateException("Native library not loaded")
         }
+
+        val env = ortEnv ?: throw IllegalStateException("ONNX environment is null")
+        val session = ortSession ?: throw IllegalStateException("ONNX session is null")
 
         val phonemes = withContext(nativeDispatcher) {
             try {
@@ -265,73 +203,55 @@ class NeuTTSEngine @Inject constructor(
             return@flow
         }
 
-        // Generate tokens from Llama model
-        val tokens = withContext(nativeDispatcher) {
-            try {
-                nativeGenerate(llamaCtxHandle, phonemes, referenceVoiceTokens, speed)
-            } catch (e: UnsatisfiedLinkError) {
-                Log.e(TAG, "nativeGenerate failed - library issue", e)
-                null
+        // Tokenize IPA phonemes with KokoroTokenizer (limit to 510 tokens per chunk)
+        val chunks = kokoroTokenizer.tokenizeWithLimit(phonemes)
+
+        for (chunk in chunks) {
+            // style vector: shape [1, 256]
+            val tokenCount = chunk.size
+            val styleData = voiceManager.getEmbedding(currentVoiceId, tokenCount)
+            
+            val inputIdsTensor = OnnxTensor.createTensor(env, LongBuffer.wrap(chunk), longArrayOf(1, chunk.size.toLong()))
+            val styleTensor = OnnxTensor.createTensor(env, java.nio.FloatBuffer.wrap(styleData), longArrayOf(1, 256))
+            
+            // Speed tensor shape handling
+            val speedInfo = session.inputInfo["speed"]?.info as? TensorInfo
+            val speedTensor = if (speedInfo?.shape?.isEmpty() == true || speedInfo?.shape?.contentEquals(longArrayOf()) == true) {
+                OnnxTensor.createTensor(env, java.nio.FloatBuffer.wrap(floatArrayOf(speed)), longArrayOf())
+            } else {
+                OnnxTensor.createTensor(env, java.nio.FloatBuffer.wrap(floatArrayOf(speed)), longArrayOf(1))
             }
-        }
 
-        if (tokens == null || tokens.isEmpty()) {
-            Log.e(TAG, "Generated tokens were empty or null.")
-            return@flow
-        }
+            val inputs = mapOf(
+                "input_ids" to inputIdsTensor,
+                "style" to styleTensor,
+                "speed" to speedTensor
+            )
 
-        // Decode tokens using ONNX session
-        val waveform = decodeTokens(tokens)
-        if (waveform != null && waveform.isNotEmpty()) {
-            emit(waveform)
+            val waveform = engineMutex.withLock {
+                try {
+                    session.run(inputs).use { results ->
+                        val outputTensor = results["waveform"].orElse(null) as? OnnxTensor ?: return@use null
+                        val floatBuffer = outputTensor.floatBuffer
+                        val outputData = FloatArray(floatBuffer.remaining())
+                        floatBuffer.get(outputData)
+                        outputData
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "ONNX inference error", e)
+                    null
+                } finally {
+                    inputIdsTensor.close()
+                    styleTensor.close()
+                    speedTensor.close()
+                }
+            }
+
+            if (waveform != null && waveform.isNotEmpty()) {
+                emit(waveform)
+            }
         }
     }.flowOn(nativeDispatcher)
-
-    private fun decodeTokens(tokens: IntArray): FloatArray? {
-        val env = ortEnv ?: return null
-        val session = ortSession ?: return null
-
-        try {
-            val inputName = session.inputNames.iterator().next()
-            val inputInfo = session.inputInfo[inputName] ?: return null
-            val tensorInfo = inputInfo.info as? TensorInfo ?: return null
-
-            val numTokens = tokens.size
-            val shape = when (tensorInfo.shape.size) {
-                2 -> longArrayOf(1, numTokens.toLong())
-                3 -> longArrayOf(1, 1, numTokens.toLong())
-                else -> longArrayOf(1, 1, 1, numTokens.toLong())
-            }
-
-            val tensor = when (tensorInfo.type) {
-                OnnxJavaType.INT64 -> {
-                    val longTokens = LongArray(tokens.size) { tokens[it].toLong() }
-                    OnnxTensor.createTensor(env, LongBuffer.wrap(longTokens), shape)
-                }
-                OnnxJavaType.INT32 -> {
-                    OnnxTensor.createTensor(env, IntBuffer.wrap(tokens), shape)
-                }
-                else -> {
-                    val floatTokens = FloatArray(tokens.size) { tokens[it].toFloat() }
-                    OnnxTensor.createTensor(env, java.nio.FloatBuffer.wrap(floatTokens), shape)
-                }
-            }
-
-            val outputName = session.outputNames.iterator().next()
-            tensor.use {
-                session.run(mapOf(inputName to tensor)).use { results ->
-                    val outputTensor = results[outputName].orElse(null) as? OnnxTensor ?: return null
-                    val floatBuffer = outputTensor.floatBuffer
-                    val outputData = FloatArray(floatBuffer.remaining())
-                    floatBuffer.get(outputData)
-                    return outputData
-                }
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error decoding tokens via ONNX", e)
-            return null
-        }
-    }
 
     suspend fun release() = withContext(nativeDispatcher) {
         engineMutex.withLock {
@@ -340,10 +260,6 @@ class NeuTTSEngine @Inject constructor(
     }
 
     private fun releaseInternal() {
-        if (llamaCtxHandle != 0L) {
-            nativeFreeLlama(llamaCtxHandle)
-            llamaCtxHandle = 0L
-        }
         if (espeakInitialized) {
             nativeFreeEspeak()
             espeakInitialized = false

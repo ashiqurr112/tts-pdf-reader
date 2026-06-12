@@ -23,7 +23,7 @@ import com.example.ttspdfreader.presentation.home.HomeScreen
 import com.example.ttspdfreader.presentation.reader.ReaderScreen
 import com.example.ttspdfreader.presentation.settings.SettingsScreen
 import com.example.ttspdfreader.presentation.tts.ModelDownloadScreen
-import com.example.ttspdfreader.presentation.tts.VoiceSetupScreen
+import com.example.ttspdfreader.presentation.tts.VoicePickerScreen
 
 sealed class Screen(val route: String, val title: String, val icon: ImageVector) {
     object Home : Screen("home", "Home", Icons.Default.Home)
@@ -149,7 +149,7 @@ fun MainNavigation(
             }
 
             composable("voice_setup") {
-                VoiceSetupScreen(
+                VoicePickerScreen(
                     onBack = {
                         navController.popBackStack()
                     }

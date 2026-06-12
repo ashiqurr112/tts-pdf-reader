@@ -106,9 +106,6 @@ class ReadAloudService : Service(), AudioManager.OnAudioFocusChangeListener {
 
     private var pdfUri: Uri? = null
     private var totalPagesCount = 0
-    // Cache of reference voice tokens loaded from disk. Populated once when
-    // playback begins so we don't hit the file system on every sentence.
-    private var cachedReferenceVoiceTokens: IntArray? = null
 
     inner class LocalBinder : Binder() {
         fun getService(): ReadAloudService = this@ReadAloudService
@@ -139,6 +136,13 @@ class ReadAloudService : Service(), AudioManager.OnAudioFocusChangeListener {
         
         // Initialize playback speed from preferences
         _playbackSpeed.value = settingsManager.getSpeed()
+
+        // Collect selectedVoiceId to load embedding on changes (hot-swap voice)
+        serviceScope.launch(Dispatchers.IO) {
+            settingsManager.selectedVoiceId.collect { voiceId ->
+                ttsEngine.loadVoiceEmbedding(voiceId)
+            }
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder = binder
@@ -188,10 +192,10 @@ class ReadAloudService : Service(), AudioManager.OnAudioFocusChangeListener {
                 return@launch
             }
 
-            // Load and cache reference voice tokens once here rather than
-            // re-reading the file from disk on every sentence in readSentence().
-            cachedReferenceVoiceTokens = loadReferenceVoiceTokens()
-            ttsEngine.setReferenceVoice(cachedReferenceVoiceTokens)
+            // Load voice embedding
+            withContext(Dispatchers.IO) {
+                ttsEngine.loadVoiceEmbedding(settingsManager.selectedVoiceId.value)
+            }
 
             loadPageText(startPage, startSentenceIndex)
         }
@@ -314,30 +318,6 @@ class ReadAloudService : Service(), AudioManager.OnAudioFocusChangeListener {
                 updateNotification()
             }
         }
-    }
-
-    private suspend fun loadReferenceVoiceTokens(): IntArray? = withContext(Dispatchers.IO) {
-        val tokensFile = File(filesDir, "voice/reference_tokens.dat")
-        if (tokensFile.exists() && settingsManager.hasReferenceVoice()) {
-            try {
-                tokensFile.readBytes().let { bytes ->
-                    val ints = IntArray(bytes.size / 4)
-                    // FIX: must specify LITTLE_ENDIAN to match the byte order used
-                    // when tokens are written in VoiceSetupViewModel.saveClonedVoice().
-                    // Without this the JVM default (BIG_ENDIAN) silently reverses every
-                    // token's bytes, feeding garbage values into nativeGenerate() and
-                    // producing audio that doesn't resemble the cloned voice at all.
-                    java.nio.ByteBuffer.wrap(bytes)
-                        .order(java.nio.ByteOrder.LITTLE_ENDIAN)
-                        .asIntBuffer()
-                        .get(ints)
-                    return@withContext ints
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to load reference voice tokens", e)
-            }
-        }
-        null
     }
 
     fun pauseReading() {
