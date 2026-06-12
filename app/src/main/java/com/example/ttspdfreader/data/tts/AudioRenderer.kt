@@ -127,6 +127,8 @@ class AudioRenderer @Inject constructor() {
                 }
                 waitForPlaybackComplete(initialHeadPos + sentenceFrames.toLong())
                 audioTrack?.pause()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Error during audio playback collection", e)
             } finally {
@@ -168,6 +170,8 @@ class AudioRenderer @Inject constructor() {
                 val remainingMs = (remainingFrames.toFloat() / track.sampleRate * 1000 / playbackSpeed).toLong()
                 delay(remainingMs.coerceIn(20L, 200L))
             }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.e(TAG, "Error waiting for audio track completion", e)
         }

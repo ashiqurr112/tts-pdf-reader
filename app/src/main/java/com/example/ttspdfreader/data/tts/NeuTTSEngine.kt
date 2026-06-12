@@ -191,9 +191,12 @@ class NeuTTSEngine @Inject constructor(
         val env = ortEnv ?: throw IllegalStateException("ONNX environment is null")
         val session = ortSession ?: throw IllegalStateException("ONNX session is null")
 
+        val isBritish = currentVoiceId.startsWith("b", ignoreCase = true)
+        val langCode = if (isBritish) "en-gb" else "en-us"
+
         val rawPhonemes = withContext(nativeDispatcher) {
             try {
-                nativePhonemeize(text, "en-us")
+                nativePhonemeize(text, langCode)
             } catch (e: UnsatisfiedLinkError) {
                 Log.e(TAG, "nativePhonemeize failed - library issue", e)
                 ""
@@ -205,7 +208,7 @@ class NeuTTSEngine @Inject constructor(
         }
 
         // Translate raw espeak-ng IPA to Misaki/Kokoro phoneme format
-        val phonemes = translatePhonemes(rawPhonemes, british = false)
+        val phonemes = translatePhonemes(rawPhonemes, british = isBritish)
 
         // Tokenize IPA phonemes with KokoroTokenizer (limit to 510 tokens per chunk)
         val chunks = kokoroTokenizer.tokenizeWithLimit(phonemes)

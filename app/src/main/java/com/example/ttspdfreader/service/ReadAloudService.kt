@@ -253,6 +253,8 @@ class ReadAloudService : Service(), AudioManager.OnAudioFocusChangeListener {
 
                 val targetIndex = startSentenceIndex.coerceIn(0, chunkedSentences.lastIndex)
                 readSentence(targetIndex)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Error reading page text", e)
                 _ttsState.value = TtsState.ERROR
@@ -291,6 +293,8 @@ class ReadAloudService : Service(), AudioManager.OnAudioFocusChangeListener {
                 // Safely attempt synthesis - init may fail if native libs can't load
                 val audioFlow = try {
                     ttsEngine.synthesize(sentence.text, _playbackSpeed.value)
+                } catch (initError: kotlinx.coroutines.CancellationException) {
+                    throw initError
                 } catch (initError: Exception) {
                     Log.e(TAG, "TTS synthesis/init failed", initError)
                     _ttsState.value = TtsState.ERROR
@@ -312,6 +316,8 @@ class ReadAloudService : Service(), AudioManager.OnAudioFocusChangeListener {
                         }
                     }
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // Do nothing; cooperative cancellation during pause/stop/skip
             } catch (e: Exception) {
                 Log.e(TAG, "Error in playback flow", e)
                 _ttsState.value = TtsState.ERROR

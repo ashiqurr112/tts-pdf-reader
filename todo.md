@@ -68,6 +68,16 @@ All identified issues preventing or affecting the "Read Aloud" feature have been
 - **Issue:** `VoiceManager.kt` was lookup-offsetting the style embedding by subtracting 1 (`tokenCount - 1`), which mismatched the official `kokoro-onnx` logic that uses the sequence length directly.
 - **Resolution:** Updated `clampedCount` in `VoiceManager.kt` to use `tokenCount` directly, clamped to the maximum vocabulary token range.
 
+### 🟢 Hardcoded eSpeak Voice Name / Dialect (Resolved)
+
+- **Issue:** The `NeuTTSEngine.kt` hardcoded `"en-us"` as the language and `british = false` when generating and translating phonemes. If a user selected a British voice, eSpeak still used American English phonemization rules, resulting in pronunciation errors or gibberish.
+- **Resolution:** Modified `NeuTTSEngine.kt` to dynamically inspect the current voice ID. If it starts with `"b"`, the engine passes `"en-gb"` and sets `british = true` for phoneme translation; otherwise, it uses `"en-us"` and `british = false`.
+
+### 🟢 Swallowing CancellationException during pause/stop (Resolved)
+
+- **Issue:** Several coroutine blocks in `ReadAloudService.kt` and `AudioRenderer.kt` caught generic `Exception` blocks without re-throwing `CancellationException`. As a result, when a user paused, stopped, or skipped a sentence (which cancels active playback jobs), the cancellation event was treated as a playback failure, logging errors and incorrectly setting the state to `TtsState.ERROR`.
+- **Resolution:** Modified both `ReadAloudService.kt` and `AudioRenderer.kt` to explicitly catch and re-throw (or safely ignore) `CancellationException` in all coroutine blocks.
+
 ---
 
 ### Summary Table of Bug Statuses
@@ -82,3 +92,5 @@ All identified issues preventing or affecting the "Read Aloud" feature have been
 | 6 | Audio underruns repeating garbage sound | **Major** | Buzzing / stuttering repeating sound between sentences | **Fixed** (Postponed play & paused on complete) |
 | 7 | G2P Phoneme Mismatch | **Fatal** | Model receives wrong tokens and outputs noise | **Fixed** (Added translatePhonemes pipeline) |
 | 8 | PCM_FLOAT driver compatibility issues | **Major** | Loud static noise/buzzing during playback on some devices | **Fixed** (Converted to PCM_16BIT / ShortArray) |
+| 9 | Hardcoded eSpeak voice name / dialect | **Major** | Incorrect pronunciation or failure with British voices | **Fixed** (Dynamically select "en-gb" / "en-us") |
+| 10 | Swallowing CancellationException during pause/stop | **Major** | State set to `TtsState.ERROR` and errors logged during pause/skip | **Fixed** (Rethrow/ignore CancellationException) |
