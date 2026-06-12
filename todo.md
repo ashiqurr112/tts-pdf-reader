@@ -1,0 +1,61 @@
+## Root Cause Analysis: Why Read Aloud Isn't Working [RESOLVED]
+
+All identified issues preventing or affecting the "Read Aloud" feature have been successfully resolved.
+
+---
+
+### 🟢 Primary Bug: Missing Git Submodules (Resolved)
+
+- **Issue:** The app previously failed to compile because the git submodules (`espeak-ng` and `llama.cpp`) were not checked out.
+- **Resolution:** The `espeak-ng` submodule has been fully checked out and populated. The project successfully builds.
+
+---
+
+### 🟢 Secondary Bug: `llama.cpp` Dead Reference (Resolved)
+
+- **Issue:** `llama.cpp` was a dead reference since the project migrated to Kokoro ONNX, yet it was still registered in `.gitmodules`.
+- **Resolution:** The `llama.cpp` submodule has been fully de-registered, removed from the repository, and `.gitmodules` has been updated.
+
+---
+
+### 🟢 Tertiary Bug: `RECORD_AUDIO` Permission Declared But Irrelevant (Resolved)
+
+- **Issue:** The manifest declared `RECORD_AUDIO`, which triggered unnecessary permission prompts despite not being used.
+- **Resolution:** The permission declaration has been removed from [AndroidManifest.xml](file:///workspaces/tts-pdf-reader/app/src/main/AndroidManifest.xml).
+
+---
+
+### 🟢 Voice Model Embedding Size Check Crash (Resolved)
+
+- **Issue:** The app crashed when starting TTS playback with `java.lang.IllegalStateException: Invalid voice file size. Expected 524288 bytes, but got 522240`.
+- **Root Cause:** `VoiceManager.kt` expected 512 max tokens (`EMBEDDING_LENGTH = 131072`), but the actual Kokoro voice file models in the application are designed with a limit of 510 tokens (`522240` bytes / 4 bytes per float = `130560` floats = `510 * 256`).
+- **Resolution:** Fixed [VoiceManager.kt](file:///workspaces/tts-pdf-reader/app/src/main/java/com/example/ttspdfreader/data/tts/VoiceManager.kt) to use `MAX_TOKENS = 510` and `EMBEDDING_LENGTH = 130560`, resolving the crash.
+
+---
+
+### 🟢 Voice Style Embedding Index Off-by-One (Resolved)
+
+- **Issue:** The voice embedding lookup was off-by-one, using sequence length `L` directly as the 0-indexed offset.
+- **Resolution:** Corrected `VoiceManager.getEmbedding` to lookup the voice embedding at `(tokenCount - 1).coerceIn(0, MAX_TOKENS - 1)` matching `kokoro-onnx` implementation.
+
+---
+
+### 🟢 Audio Track Repeating Garbage / Stuttering Sound (Resolved)
+
+- **Issue:** When the TTS engine finished playing a sentence, or before it started the first sentence, `AudioTrack` was left in `PLAYSTATE_PLAYING` state with no data while the next sentence was being synthesized in the background (taking 500ms to 1s). On many Android devices, this underrun triggers the audio hardware/driver to loop the remaining buffer indefinitely, resulting in a repeating buzzing/garbage sound.
+- **Resolution:** Modified [AudioRenderer.kt](file:///workspaces/tts-pdf-reader/app/src/main/java/com/example/ttspdfreader/data/tts/AudioRenderer.kt) to:
+  1. Postpone starting the `AudioTrack` (via `track.play()`) until the first audio chunk of a sentence is synthesized and ready to be written.
+  2. Pause the `AudioTrack` (via `track.pause()`) immediately after `waitForPlaybackComplete` finishes, transitioning it out of the active playing state while synthesis is occurring in the background.
+
+---
+
+### Summary Table of Bug Statuses
+
+| # | Issue | Severity | Effect | Status |
+|---|-------|----------|--------|--------|
+| 1 | Both git submodules (`espeak-ng`, `llama.cpp`) empty | **Fatal** | App won't compile or run | **Fixed** (espeak-ng is populated) |
+| 2 | `llama.cpp` submodule is a dead reference | **Build blocker** | Dead weight, potential CMake failures | **Fixed** (Submodule removed) |
+| 3 | `RECORD_AUDIO` declared but never used | Minor | Unnecessary permission dialog | **Fixed** (Removed from manifest) |
+| 4 | Voice embedding file size check fails | **Fatal** | Runtime crash when playing TTS (`TtsState.ERROR`) | **Fixed** (Updated to 510 tokens) |
+| 5 | Voice style embedding index off-by-one | Minor | Incorrect style representation | **Fixed** (Offset by -1) |
+| 6 | Audio underruns repeating garbage sound | **Major** | Buzzing / stuttering repeating sound between sentences | **Fixed** (Postponed play & paused on complete) |

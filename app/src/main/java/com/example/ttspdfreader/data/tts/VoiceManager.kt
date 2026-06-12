@@ -26,9 +26,9 @@ class VoiceManager @Inject constructor(
             VoiceInfo("bf_emma", "Emma (UK Female)"),
             VoiceInfo("bm_george", "George (UK Male)")
         )
-        const val EMBEDDING_LENGTH = 131072 // 512 * 1 * 256
+        const val EMBEDDING_LENGTH = 130560 // 510 * 1 * 256
         const val TOKEN_LENGTH = 256
-        const val MAX_TOKENS = 512
+        const val MAX_TOKENS = 510
     }
 
     fun getAvailableVoices(): List<VoiceInfo> {
@@ -44,8 +44,8 @@ class VoiceManager @Inject constructor(
             voiceCache[voiceId] = cached
         }
 
-        // Clamp tokenCount to 0..511
-        val clampedCount = tokenCount.coerceIn(0, MAX_TOKENS - 1)
+        // Clamp tokenCount to 0..509 (clamped length - 1)
+        val clampedCount = (tokenCount - 1).coerceIn(0, MAX_TOKENS - 1)
         val offset = clampedCount * TOKEN_LENGTH
         val embedding = FloatArray(TOKEN_LENGTH)
         System.arraycopy(cached, offset, embedding, 0, TOKEN_LENGTH)

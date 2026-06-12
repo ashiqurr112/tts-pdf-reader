@@ -93,30 +93,37 @@ class AudioRenderer @Inject constructor() {
         // and no window where a concurrent pause() races with this assignment.
         isPlaying = true
 
-        try {
-            audioTrack?.let { track ->
-                if (track.playState != AudioTrack.PLAYSTATE_PLAYING) {
-                    track.play()
-                }
-            }
-        } catch (e: IllegalStateException) {
-            Log.e(TAG, "AudioTrack play failed, reinitializing", e)
-            mutex.withLock {
-                audioTrack?.release()
-                audioTrack = null
-            }
-            init()
-            audioTrack?.play()
-        }
-
         // FIX: use the shared rendererScope (not a fresh detached scope) so the
         // job is reachable and cancellable via rendererJob.
         rendererJob = rendererScope.launch {
             try {
+                val initialHeadPos = audioTrack?.playbackHeadPosition ?: 0
+                var sentenceFrames = 0
+                var isStarted = false
                 audioChunks.collect { chunk ->
-                    write(chunk)
+                    if (!isStarted) {
+                        try {
+                            audioTrack?.let { track ->
+                                if (track.playState != AudioTrack.PLAYSTATE_PLAYING) {
+                                    track.play()
+                                }
+                            }
+                        } catch (e: IllegalStateException) {
+                            Log.e(TAG, "AudioTrack play failed, reinitializing", e)
+                            mutex.withLock {
+                                audioTrack?.release()
+                                audioTrack = null
+                            }
+                            init()
+                            audioTrack?.play()
+                        }
+                        isStarted = true
+                    }
+                    val written = write(chunk)
+                    sentenceFrames += written
                 }
-                waitForPlaybackComplete()
+                waitForPlaybackComplete(initialHeadPos + sentenceFrames)
+                audioTrack?.pause()
             } catch (e: Exception) {
                 Log.e(TAG, "Error during audio playback collection", e)
             } finally {
@@ -132,7 +139,7 @@ class AudioRenderer @Inject constructor() {
         return rendererJob!!
     }
 
-    private fun write(chunk: FloatArray) {
+    private fun write(chunk: FloatArray): Int {
         var offset = 0
         while (offset < chunk.size && isPlaying) {
             val track = audioTrack ?: break
@@ -143,15 +150,21 @@ class AudioRenderer @Inject constructor() {
             }
             offset += written
         }
+        return offset
     }
 
-    private suspend fun waitForPlaybackComplete() {
+    private suspend fun waitForPlaybackComplete(targetFrameCount: Int) {
         val track = audioTrack ?: return
         try {
-            val bufferSize = track.bufferSizeInFrames
-            val sampleRate = track.sampleRate
-            val delayMs = (bufferSize.toFloat() / sampleRate * 1000).toLong()
-            delay(delayMs.coerceAtLeast(200L))
+            while (isPlaying) {
+                val currentHead = track.playbackHeadPosition
+                if (currentHead >= targetFrameCount) {
+                    break
+                }
+                val remainingFrames = targetFrameCount - currentHead
+                val remainingMs = (remainingFrames.toFloat() / track.sampleRate * 1000 / playbackSpeed).toLong()
+                delay(remainingMs.coerceIn(20L, 200L))
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Error waiting for audio track completion", e)
         }
